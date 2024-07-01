@@ -1,7 +1,9 @@
 use regex::Regex;
 use std::collections::HashMap;
+use serde::{Serialize, Deserialize};
 
 /// Object which represents a song in Cantara
+#[derive(Clone, Serialize, Deserialize, PartialEq, Debug)]
 pub struct Song {
     pub title: String,
     tags: HashMap<String, String>,
@@ -113,7 +115,7 @@ impl Song {
 }
 
 /// All possible types of a song part. Some are repeatable (like refrains, etc.), some are not.
-#[derive(Debug, PartialEq)]
+#[derive(Copy, Clone, Serialize, Deserialize, PartialEq, Debug)]
 pub enum SongPartType {
     Verse,
     Chorus,
@@ -188,7 +190,7 @@ impl SongPartType {
 }
 
 /// The language of the lyrics in a lyric element of a song content
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Serialize, Deserialize, PartialEq, Debug)]
 pub enum LyricLanguage {
     /// No specific language information is given
     Default,
@@ -196,7 +198,7 @@ pub enum LyricLanguage {
     Specific(String),
 }
 /// The type which a song part content element can have
-#[derive(Debug, Clone)]
+#[derive(Clone, Serialize, Deserialize, PartialEq, Debug)]
 pub enum SongPartContentType {
     LeadVoice,
     SupranoVoice,
@@ -234,36 +236,14 @@ impl SongPartContentType {
     }
 }
 
-impl PartialEq for SongPartContentType {
-    fn eq(&self, other: &Self) -> bool {
-        match (self, other) {
-            (
-                SongPartContentType::Lyrics { language: lang1 },
-                SongPartContentType::Lyrics { language: lang2 },
-            ) => lang1 == lang2,
-            (SongPartContentType::Lyrics { language: _ }, _) => false,
-            (_, SongPartContentType::Lyrics { language: _ }) => false,
-            (SongPartContentType::LeadVoice, SongPartContentType::LeadVoice) => true,
-            (SongPartContentType::SupranoVoice, SongPartContentType::SupranoVoice) => true,
-            (SongPartContentType::AltoVoice, SongPartContentType::AltoVoice) => true,
-            (SongPartContentType::TenorVoice, SongPartContentType::TenorVoice) => true,
-            (SongPartContentType::BassVoice, SongPartContentType::BassVoice) => true,
-            (SongPartContentType::Instrumental, SongPartContentType::Instrumental) => true,
-            (SongPartContentType::Solo, SongPartContentType::Solo) => true,
-            (SongPartContentType::Chords, SongPartContentType::Chords) => true,
-            _ => false,
-        }
-    }
-}
-
-#[derive(Debug, PartialEq)]
+#[derive(Clone, Serialize, Deserialize, PartialEq, Debug)]
 pub struct SongPartContent {
     pub voice_type: SongPartContentType,
     pub content: String,
 }
 
 /// A part of a song, which can contain multiple voices (e.g. lyrics, chords, etc.)
-#[derive(Debug, PartialEq)]
+#[derive(Clone, Serialize, Deserialize, PartialEq, Debug)]
 pub struct SongPart {
     pub id: String,
     pub part_type: SongPartType,
