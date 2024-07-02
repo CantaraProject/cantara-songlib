@@ -4,7 +4,7 @@ use std::error::Error;
 use regex::Regex;
 
 use crate::importer::errors::CantaraImportNoContentError;
-use crate::song::{LyricLanguage, Song, SongPartContent, SongPartContentType};
+use crate::song::{LyricLanguage, Song, SongPart, SongPartContent, SongPartContentType, SongPartType};
 
 use super::Importer;
 
@@ -32,14 +32,14 @@ impl CantaraSongFileImporter {
         if block.chars().next().unwrap() == '#' {
             let tags_regex = Regex::new(r"#(\w+):\s*(.+)$").unwrap();
 
-            tags_regex.captures_iter(block).map(|capture: regex::Captures| {
+            let _ = tags_regex.captures_iter(block).map(|capture: regex::Captures| {
                 let tag: &str = capture.get(1).unwrap().as_str();
                 let value: &str = capture.get(2).unwrap().as_str();
                 cloned_song.add_tag(tag, value);
             });
             return Ok(cloned_song);
         }
-        let mut song_part: &crate::song::SongPart = cloned_song.add_part_of_type(crate::song::SongPartType::Verse, None);
+        let song_part: &mut SongPart = cloned_song.add_part_of_type(SongPartType::Verse, None);
 
         {
             let lyric_language: LyricLanguage = LyricLanguage::Default;
@@ -48,7 +48,7 @@ impl CantaraSongFileImporter {
                 content: block.to_string(),
             };
 
-            song_part.add_content(lyrics_content);
+            let _ = &mut song_part.add_content(lyrics_content);
         }
         
         Ok(cloned_song)
@@ -105,16 +105,14 @@ impl Importer for CantaraSongFileImporter {
             }
         };
 
-        let mut song: Song = Song::new(title);
+        let song: Song = Song::new(title);
         
         // Parse the blocks
         let parts_iterator: std::str::Split<&str> = self.contents.split("\n\n");
         let parts: Vec<&str> = parts_iterator.collect();
-        parts.iter().fold(song, |song, part| {
-            let song: Song = self.parse_block(part, song).unwrap();
-            song
+        let song = parts.iter().fold(song, |song, part| {
+            self.parse_block(part, song).unwrap()
         });
-
         Ok(song)
     }
 }
@@ -126,7 +124,7 @@ mod test {
     #[test]
     fn test_import_song() {
         let binding = CantaraSongFileImporter::new();
-        let mut importer = binding
+        let importer = binding
             .from_content(String::from("#title: Test Song"));
         let song = importer.import_song().unwrap();
         assert_eq!(song.title, "Test Song");

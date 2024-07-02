@@ -60,20 +60,20 @@ impl Song {
     /// * `part_type` - The type of the part
     /// * `specific_number` - The number of the part (e.g. 1 for "verse.1")
     /// # Returns
-    /// A reference of the created song part
+    /// A mutable reference of the created song part
     pub fn add_part_of_type(
         &mut self,
         part_type: SongPartType,
         specific_number: Option<u32>,
-    ) -> &SongPart {
+    ) -> &mut SongPart {
         let id = format!(
             "{}.{}",
             part_type.to_string(),
             specific_number.unwrap_or_else(|| self.get_part_count(part_type) + 1)
         );
-        let mut part = SongPart::new(&id, specific_number);
+        let part: SongPart = SongPart::new(&id, specific_number);
         self.add_part(part);
-        self.parts.last().unwrap()
+        self.parts.last_mut().unwrap()
     }
 
     /// Returns a list of all ContentTypes that are used in the song
