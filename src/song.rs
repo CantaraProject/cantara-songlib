@@ -71,7 +71,7 @@ impl Song {
             part_type.to_string(),
             specific_number.unwrap_or_else(|| self.get_part_count(part_type) + 1)
         );
-        let part = SongPart::new(&id, specific_number);
+        let mut part = SongPart::new(&id, specific_number);
         self.add_part(part);
         self.parts.last().unwrap()
     }
@@ -111,6 +111,50 @@ impl Song {
             }
         }
         content_types
+    }
+
+    /// Finds a content string anywhere in the song and returns all positions where it was found
+    /// # Arguments
+    /// * `content` - The content string to search for
+    /// # Returns
+    /// A list of tuples with the part id and the position of the content string
+    /// # Example
+    /// ```
+    /// use cantara_songlib::song::{Song, SongPart, SongPartContent, SongPartContentType, LyricLanguage};
+    /// let mut song = cantara_songlib::song::Song::new("Test Song");
+    /// let mut part = cantara_songlib::song::SongPart::new("verse.1", Some(1));
+    /// part.add_content(cantara_songlib::song::SongPartContent {
+    ///  voice_type: cantara_songlib::song::SongPartContentType::Lyrics {
+    ///     language: cantara_songlib::song::LyricLanguage::Default
+    ///  },
+    /// content: "Amazing Grace, how sweet
+    /// the sound...".to_string(),
+    /// });
+    /// song.add_part(part);
+    /// let mut part = cantara_songlib::song::SongPart::new("chorus.1", Some(1));
+    /// part.add_content(cantara_songlib::song::SongPartContent {
+    /// voice_type: cantara_songlib::song::SongPartContentType::LeadVoice,
+    /// content: "c4 d4 e4 f4 g4".to_string(),
+    /// });
+    /// song.add_part(part);
+    /// let positions = song.find_content("Amazing Grace");
+    /// assert_eq!(positions.len(), 1);
+    /// ```
+    /// # Note
+    /// The search is case-insensitive
+    /// The search is done on the content string of the SongPartContent
+    /// # Note
+    /// The search is done on the content string of the SongPartContent
+    pub fn find_content(&self, content: &str) -> Vec<(String, usize)> {
+        let mut positions: Vec<(String, usize)> = Vec::new();
+        for part in &self.parts {
+            for content_part in &part.contents {
+                if content_part.content.to_lowercase().contains(&content.to_lowercase()) {
+                    positions.push((part.id.clone(), content_part.content.to_lowercase().find(&content.to_lowercase()).unwrap()));
+                }
+            }
+        }
+        positions
     }
 }
 

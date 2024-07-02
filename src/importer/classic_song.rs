@@ -4,7 +4,7 @@ use std::error::Error;
 use regex::Regex;
 
 use crate::importer::errors::CantaraImportNoContentError;
-use crate::song::Song;
+use crate::song::{LyricLanguage, Song, SongPartContent, SongPartContentType};
 
 use super::Importer;
 
@@ -39,36 +39,56 @@ impl CantaraSongFileImporter {
             });
             return Ok(cloned_song);
         }
+        let mut song_part: &crate::song::SongPart = cloned_song.add_part_of_type(crate::song::SongPartType::Verse, None);
+
+        {
+            let lyric_language: LyricLanguage = LyricLanguage::Default;
+            let lyrics_content: SongPartContent = SongPartContent {
+                voice_type: SongPartContentType::Lyrics { language: lyric_language },
+                content: block.to_string(),
+            };
+
+            song_part.add_content(lyrics_content);
+        }
         
         Ok(cloned_song)
+    }
+
+    fn load_content(&mut self) -> Result<(), Box<dyn Error>> {
+        let mut file = File::open(&self.filepath)?;
+        let mut file_content = String::new();
+        file.read_to_string(&mut file_content)?;
+        self.contents = file_content;
+        Ok(())
     }
 }
 
 impl Importer for CantaraSongFileImporter {
 
-    fn from_path(&mut self, filepath: &str) -> Result<&mut Self, Box<dyn Error>>{
-        self.filepath = filepath.to_string();
-        match File::open(&self.filepath) {
-            Ok(mut file) => {
-                let mut contents = String::new();
-                file.read_to_string(&mut contents)?;
-                self.contents = contents;
-            },
-            Err(e) => {
-                return Err(Box::new(e));
-            }
-        }
-        Ok(self)
+    fn from_path(self, filepath: &str) -> Self {
+        
+        let filepath: String = filepath.to_string();
+        
+        CantaraSongFileImporter {
+            filepath: filepath,
+            ..self
+        }      
     }
 
-    fn from_content(&mut self, contents: String) -> &mut Self {
-        self.contents = contents.trim().to_string();
-        self
+    fn from_content(self, contents: String) -> Self {
+        CantaraSongFileImporter {
+            contents: contents.trim().to_string(),
+            ..self
+        }
     }
 
     fn import_song(&self) -> Result<Song, Box<dyn Error>> {
         if self.contents.is_empty() {
-            return Err(Box::new(CantaraImportNoContentError::new()));
+            return Err(
+                Box::new(
+                    CantaraImportNoContentError { }
+                )
+            );
         } 
         // Get the title either from the content or the filename
         let title_regex = Regex::new(r"#title:\s*(.+?)$").unwrap();
@@ -85,13 +105,13 @@ impl Importer for CantaraSongFileImporter {
             }
         };
 
-        let song: Song = Song::new(title);
+        let mut song: Song = Song::new(title);
         
         // Parse the blocks
         let parts_iterator: std::str::Split<&str> = self.contents.split("\n\n");
         let parts: Vec<&str> = parts_iterator.collect();
         parts.iter().fold(song, |song, part| {
-            song = self.parse_block(part, song).unwrap();
+            let song: Song = self.parse_block(part, song).unwrap();
             song
         });
 
@@ -105,7 +125,8 @@ mod test {
 
     #[test]
     fn test_import_song() {
-        let mut importer = CantaraSongFileImporter::new()
+        let binding = CantaraSongFileImporter::new();
+        let mut importer = binding
             .from_content(String::from("#title: Test Song"));
         let song = importer.import_song().unwrap();
         assert_eq!(song.title, "Test Song");

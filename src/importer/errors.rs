@@ -8,3 +8,9 @@ impl fmt::Display for CantaraImportNoContentError {
         write!(f, "There is no content to import")
     }
 }
+
+impl std::error::Error for CantaraImportNoContentError {
+    fn description(&self) -> &str {
+        "There is no content to import"
+    }
+}
