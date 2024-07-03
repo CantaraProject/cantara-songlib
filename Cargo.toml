@@ -3,6 +3,17 @@ name = "cantara-songlib"
 version = "0.1.0"
 edition = "2021"
 
+[lib]
+crate-type = ["cdylib"]
+
+[profile.release]
+strip = true  # Automatically strip symbols from the binary.
+opt-level = "z"  # Optimize for size.
+lto = true
+codegen-units = 1
+panic = "abort"
+
+
 [dependencies]
 regex = "1.10.5"
 serde = { version = "1.0.203", features = ["derive"] }
