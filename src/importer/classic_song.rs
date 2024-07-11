@@ -1,4 +1,6 @@
 use std::error::Error;
+
+extern crate regex;
 use regex::Regex;
 
 use crate::importer::errors::CantaraImportNoContentError;
