@@ -2,9 +2,9 @@ mod errors;
 mod classic_song;
 
 use std::error::Error;
-use crate::song::Song;
 use std::path::Path;
 use std::ffi::OsStr;
+use crate::song::Song;
 
 /// Imports a song from a file.
 /// The function reads the content of the file and determines the file format by its extension.

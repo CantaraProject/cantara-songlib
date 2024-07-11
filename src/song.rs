@@ -1,5 +1,9 @@
 use regex::Regex;
-use std::collections::HashMap;
+use std::{
+    cell::RefCell, 
+    collections::HashMap, 
+    rc::Rc
+};
 use serde::{Serialize, Deserialize};
 
 /// Object which represents a song in Cantara
@@ -7,7 +11,8 @@ use serde::{Serialize, Deserialize};
 pub struct Song {
     pub title: String,
     tags: HashMap<String, String>,
-    parts: Vec<SongPart>,
+    parts: Vec<Rc<RefCell<SongPart>>>,
+    part_order: Vec<Rc<RefCell<SongPart>>>,
 }
 
 impl Song {
@@ -17,6 +22,7 @@ impl Song {
             title: title.to_string(),
             tags: HashMap::new(),
             parts: Vec::new(),
+            part_order: Vec::new(),
         }
     }
 
@@ -32,7 +38,9 @@ impl Song {
 
     /// Add a part to the song
     pub fn add_part(&mut self, part: SongPart) {
-        self.parts.push(part);
+        self.parts.push(
+            Rc::new(RefCell::new(part))
+        );
     }
 
     /// Get the number of parts of a specific type
@@ -49,10 +57,14 @@ impl Song {
     /// assert_eq!(song.get_part_count(cantara_songlib::song::SongPartType::Verse), 1);
     /// ```
     pub fn get_part_count(&self, part_type: SongPartType) -> u32 {
-        self.parts
-            .iter()
-            .filter(|part| part.part_type == part_type)
-            .count() as u32
+       let mut count = 0;
+       for part_box in &self.parts {
+            let part = part_box.borrow();
+            if part.part_type.eq(&part_type) {
+                count = count + 1; 
+            }
+       }
+       count
     }
 
     /// Add a song part of a specific type
@@ -65,7 +77,7 @@ impl Song {
         &mut self,
         part_type: SongPartType,
         specific_number: Option<u32>,
-    ) -> &mut SongPart {
+    ) -> Rc<RefCell<SongPart>> {
         let id = format!(
             "{}.{}",
             part_type.to_string(),
@@ -73,7 +85,7 @@ impl Song {
         );
         let part: SongPart = SongPart::new(&id, specific_number);
         self.add_part(part);
-        self.parts.last_mut().unwrap()
+        self.parts.last().unwrap().clone()
     }
 
     /// Returns a list of all ContentTypes that are used in the song
@@ -104,7 +116,7 @@ impl Song {
     pub fn get_content_types(&self) -> Vec<SongPartContentType> {
         let mut content_types: Vec<SongPartContentType> = Vec::new();
         for part in &self.parts {
-            for content in &part.contents {
+            for content in &part.borrow().contents {
                 if !content_types.contains(&content.voice_type) {
                     content_types.push(content.voice_type.clone());
                 }
@@ -113,11 +125,11 @@ impl Song {
         content_types
     }
 
-    /// Finds a content string anywhere in the song and returns all positions where it was found
+    /// Finds a content anywhere in the song and returns all positions where it was found
     /// # Arguments
     /// * `content` - The content string to search for
     /// # Returns
-    /// A list of tuples with the part id and the position of the content string
+    /// A list of references to the song parts where the content was found
     /// # Example
     /// ```
     /// use cantara_songlib::song::{Song, SongPart, SongPartContent, SongPartContentType, LyricLanguage};
@@ -145,17 +157,33 @@ impl Song {
     /// The search is done on the content string of the SongPartContent
     /// # Note
     /// The search is done on the content string of the SongPartContent
-    pub fn find_content(&self, content: &str) -> Vec<(String, usize)> {
-        let mut positions: Vec<(String, usize)> = Vec::new();
-        for part in &self.parts {
+    pub fn find_content_in_part(&self, content: &str) -> Vec<SongPart> {
+        let mut positions: Vec<SongPart> = Vec::new();
+        for part_refcall in &self.parts {
+            let part = part_refcall.borrow();
             for content_part in &part.contents {
-                if content_part.content.to_lowercase().contains(&content.to_lowercase()) {
-                    positions.push((part.id.clone(), content_part.content.to_lowercase().find(&content.to_lowercase()).unwrap()));
+                if content_part.content.to_lowercase().as_str() == content.to_lowercase() {
+                    positions.push(part.clone());
                 }
             }
         }
         positions
     }
+
+    pub fn find_first_content_in_part(&self, content: &str) -> Option<SongPart> {
+        self.find_content_in_part(content).first().cloned()
+    }
+
+    pub fn get_part_by_id(&self, id: &str) -> Option<SongPart> {
+        for part_refcall in &self.parts {
+            let part = part_refcall.borrow();
+            if part.id == id {
+                return Some(part.clone());
+            }
+        }
+        None
+    }
+
 }
 
 /// All possible types of a song part. Some are repeatable (like refrains, etc.), some are not.
@@ -286,15 +314,17 @@ pub struct SongPartContent {
     pub content: String,
 }
 
+type SongPartId = String;
+
 /// A part of a song, which can contain multiple voices (e.g. lyrics, chords, etc.)
 #[derive(Clone, Serialize, Deserialize, PartialEq, Debug)]
 pub struct SongPart {
-    pub id: String,
+    pub id: SongPartId,
     pub part_type: SongPartType,
     pub number: u32,
     pub contents: Vec<SongPartContent>,
     /// defines whether this part is a repetition of a previous part
-    is_repitition: bool,
+    pub is_repetition_of: Option<String>,
 }
 
 impl SongPart {
@@ -303,14 +333,14 @@ impl SongPart {
         let re: Regex = Regex::new(r"([a-zA-Z]+)\.(\d+)").unwrap();
         let caps: regex::Captures = re.captures(id).unwrap();
         let part_type: SongPartType = SongPartType::from_string(&caps[1]);
-        let is_repition: bool = false;
+        let is_repition:Option<String> = None;
         let number: u32 = specific_number.unwrap_or_else(|| 1);
         SongPart {
             id: id.to_string(),
             part_type: part_type,
             number: number,
             contents: Vec::new(),
-            is_repitition: is_repition,
+            is_repetition_of: is_repition,
         }
     }
 
@@ -329,6 +359,18 @@ impl SongPart {
             SongPartContentType::Lyrics { .. } => true,
             _ => false,
         })
+    }
+
+    pub fn is_repeatable(&self) -> bool {
+        self.part_type.is_repeatable()
+    }
+
+    pub fn is_repition(&self) -> Option<SongPartId> {
+        self.is_repetition_of.clone()
+    }
+
+    pub fn set_repition(&mut self, is_repition: Option<SongPartId>) {
+        self.is_repetition_of = is_repition;
     }
 }
 

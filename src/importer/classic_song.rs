@@ -22,7 +22,9 @@ fn parse_block(block: &str, song: Song) -> Result<Song, Box<dyn Error>> {
         });
         return Ok(cloned_song);
     }
-    let song_part: &mut SongPart = cloned_song.add_part_of_type(SongPartType::Verse, None);
+
+    let song_part_reference = cloned_song.add_part_of_type(SongPartType::Verse, None);
+    let mut song_part: std::cell::RefMut<SongPart> = song_part_reference.borrow_mut();
 
     {
         let lyric_language: LyricLanguage = LyricLanguage::Default;
@@ -60,6 +62,20 @@ pub fn import_song(content: &str) -> Result<Song, Box<dyn Error>> {
     // Parse the blocks
     let parts_iterator: std::str::Split<&str> = content.split("\n\n");
     let parts: Vec<&str> = parts_iterator.collect();
+
+    for (index, part) in parts.iter().enumerate() {
+        // Determine if the same part has been repeated
+        let mut part_index: usize = 0;
+        let _ = parts[0..index].iter().map(|p| {
+            if p == part {
+                part_index += 1;
+            }
+        }); //Hier weitermachen
+        if parts[0..index].contains(&part) {
+            part_index = parts[0..index].iter().filter(|&p| p == part).count();
+        }
+    }
+
     let song = parts.iter().fold(song, |song, part| {
         parse_block(part, song).unwrap()
     });
