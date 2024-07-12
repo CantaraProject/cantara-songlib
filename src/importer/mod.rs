@@ -44,7 +44,7 @@ pub fn import_song_from_file(file_path: &str) -> Result<Song, Box<dyn Error>> {
         "song" => {
             let wraped_song: Result<Song, Box<dyn Error>> = classic_song::import_song(&content);
             if wraped_song.is_err() {
-                return wraped_song;
+                return Result::Err(wraped_song.err().unwrap());
             }
             let mut song: Song = wraped_song.unwrap();
             if song.title.is_empty() {
