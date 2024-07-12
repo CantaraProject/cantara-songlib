@@ -7,7 +7,7 @@ use std::{cell::RefCell, rc::Rc};
 use lazy_static::lazy_static;
 
 extern crate regex;
-use regex::Regex;
+use regex::{Regex,RegexBuilder};
 
 use crate::importer::errors::CantaraImportNoContentError;
 use crate::song::{
@@ -32,8 +32,12 @@ fn parse_block(block: &str, song: Song) -> Result<Song, Box<dyn Error>> {
     if block.starts_with('#') {
         dbg!("Parsing tags");
         lazy_static! {
-            static ref TAGS_REGEX: Regex = Regex::new(r"#(\w+):\s*(.+)$").unwrap();
+            static ref TAGS_REGEX: Regex = RegexBuilder::new(r"\s*#(\w+):\s*(.+)$")
+            .multi_line(true)
+            .build()
+            .unwrap();
         }
+
         let tags_regex = &TAGS_REGEX;
         tags_regex
             .captures_iter(block)
@@ -90,7 +94,13 @@ pub fn import_song(content: &str) -> Result<Song, Box<dyn Error>> {
     dbg!(content);
 
     // Get the title either from the content or the filename
-    let title_regex = Regex::new(r"#title:\s*(.+?)\n").unwrap();
+    lazy_static! {
+        static ref TITLE_REGEX: Regex = RegexBuilder::new(r"\s*#title:\s*(.+?)$")
+                    .multi_line(true)
+                    .build()
+                    .unwrap();
+    }
+    let title_regex = &TITLE_REGEX;
 
     let title: &str = match title_regex.captures(content) {
         Some(title_captures) => title_captures.get(1).unwrap().as_str(),
@@ -123,10 +133,12 @@ mod test {
     fn test_import_song_with_tags() {
         let content: String = String::from(
             "#title: Test Song
-            #author: Test Author"
+            #author: Test Author
+            #key: C"
         );
         let song = import_song(&content).unwrap();
         assert_eq!(song.title, "Test Song");
         assert_eq!(song.get_tag("author").unwrap(), "Test Author");
+        assert_eq!(song.get_tag("key").unwrap(), "C");
     }
 }
