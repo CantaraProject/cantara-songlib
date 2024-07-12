@@ -4,7 +4,7 @@
 
 use std::error::Error;
 use std::{cell::RefCell, rc::Rc};
-use lazy_static::lazy_static;
+use std::sync::OnceLock;
 
 extern crate regex;
 use regex::{Regex,RegexBuilder};
@@ -17,8 +17,6 @@ use crate::song::{
     SongPartContent, 
     SongPartContentType, 
     SongPartType, 
-    PartOrder, 
-    SongPartId,
 };
 
 fn parse_block(block: &str, song: Song) -> Result<Song, Box<dyn Error>> {
@@ -31,14 +29,18 @@ fn parse_block(block: &str, song: Song) -> Result<Song, Box<dyn Error>> {
     // If first letter is a #, then parse the tags
     if block.starts_with('#') {
         dbg!("Parsing tags");
-        lazy_static! {
-            static ref TAGS_REGEX: Regex = RegexBuilder::new(r"\s*#(\w+):\s*(.+)$")
-            .multi_line(true)
-            .build()
-            .unwrap();
-        }
+        
+        // With that we make sure that the regex is only compiled once.
+        let tags_regex = { 
+            static TAGS_REGEX: OnceLock<Regex> = OnceLock::new();
+            TAGS_REGEX.get_or_init(|| {
+                RegexBuilder::new(r"\s*#(\w+):\s*(.+)$")
+                    .multi_line(true)
+                    .build()
+                    .unwrap()
+            })
+        };        
 
-        let tags_regex = &TAGS_REGEX;
         tags_regex
             .captures_iter(block)
             .for_each(|capture: regex::Captures| {
@@ -78,6 +80,11 @@ fn parse_block(block: &str, song: Song) -> Result<Song, Box<dyn Error>> {
         let mut song_part: std::cell::RefMut<SongPart> = song_part_reference.borrow_mut();
         let _ = &mut song_part.add_content(lyrics_content);
         song_part.set_repition(part_reference);
+        dbg!("Added part", song_part);
+    } else {
+        let unwrapped_reference = part_reference.unwrap();
+        let mut previous_song_part: std::cell::RefMut<SongPart> = unwrapped_reference.borrow_mut();
+        let _ = &mut previous_song_part.set_type(SongPartType::Chorus);
     }
 
     Ok(cloned_song)
@@ -91,17 +98,19 @@ pub fn import_song(content: &str) -> Result<Song, Box<dyn Error>> {
     if content.is_empty() {
         return Err(Box::new(CantaraImportNoContentError {}));
     }
-    dbg!(content);
+
+    // Make sure that the regex is only compiled once.
+    let title_regex: &Regex = {
+        static TITLE_REGEX: OnceLock<Regex> = OnceLock::new();
+        TITLE_REGEX.get_or_init(|| {
+            RegexBuilder::new(r"\s*#title:\s*(.+?)$")
+                .multi_line(true)
+                .build()
+                .unwrap()
+        })
+    };
 
     // Get the title either from the content or the filename
-    lazy_static! {
-        static ref TITLE_REGEX: Regex = RegexBuilder::new(r"\s*#title:\s*(.+?)$")
-                    .multi_line(true)
-                    .build()
-                    .unwrap();
-    }
-    let title_regex = &TITLE_REGEX;
-
     let title: &str = match title_regex.captures(content) {
         Some(title_captures) => title_captures.get(1).unwrap().as_str(),
         None => "",
@@ -109,10 +118,20 @@ pub fn import_song(content: &str) -> Result<Song, Box<dyn Error>> {
 
     let mut song: Song = Song::new(title);
 
+    let mut part: String = String::new();
     // Parse the blocks
-    for part in  content.split("\n\n") {
-        dbg!(part);
-        song = parse_block(part, song.clone()).unwrap();
+    for line in content.trim().lines(){
+        match line.trim() {
+            "" => {
+                song = parse_block(&part, song.clone()).unwrap();
+                dbg!("Clearing part", &part);
+                part.clear();
+            }
+            _ => {
+                part.push_str(line);
+                part.push_str("\n");
+            }
+        }
     }
     
     Ok(song)
@@ -140,5 +159,22 @@ mod test {
         assert_eq!(song.title, "Test Song");
         assert_eq!(song.get_tag("author").unwrap(), "Test Author");
         assert_eq!(song.get_tag("key").unwrap(), "C");
+    }
+
+    #[test]
+    fn test_import_song_with_verse() {
+        let content: String = 
+            "#title: Test Song
+            
+            This is a verse
+            
+            And a refrain
+            
+            The second verse
+            
+            And a refrain"
+            .to_string();
+        let song = import_song(&content).unwrap();
+        assert_eq!(song.get_part_count(SongPartType::Verse), 2);
     }
 }

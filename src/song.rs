@@ -519,6 +519,14 @@ impl SongPart {
     pub fn set_occurs_after(&mut self, occurs_after: Option<Rc<RefCell<SongPart>>>) {
         self.occurs_after = occurs_after.map(|occurs_after| occurs_after.clone())
     }
+
+    pub fn set_type(&mut self, part_type: SongPartType) {
+        self.part_type = part_type;
+    }
+
+    pub fn get_type(&self) -> SongPartType {
+        self.part_type
+    }
 }
 
 #[derive(Clone, Serialize, Deserialize, PartialEq, Debug)]
