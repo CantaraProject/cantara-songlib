@@ -20,7 +20,7 @@ fn parse_block(block: &str, song: Song) -> Result<Song, Box<dyn Error>> {
     let mut cloned_song: Song = song.clone();
 
     // If first letter is a #, then parse the tags
-    if block.chars().next().unwrap() == '#' {
+    if block.starts_with('#') {
         let tags_regex = Regex::new(r"#(\w+):\s*(.+)$").unwrap();
 
         let _ = tags_regex
@@ -81,7 +81,7 @@ pub fn import_song(content: &str) -> Result<Song, Box<dyn Error>> {
                 part_index += 1;
             }
         }); //Hier weitermachen
-        if parts[0..index].contains(&part) {
+        if parts[0..index].contains(part) {
             part_index = parts[0..index].iter().filter(|&p| p == part).count();
         }
     }

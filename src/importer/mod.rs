@@ -54,7 +54,7 @@ pub fn import_song_from_file(file_path: &str) -> Result<Song, Box<dyn Error>> {
                     .unwrap();
                 song.title = title.to_string();
             }
-            return Ok(song);
+            Ok(song)
         }
         _ => Err(Box::new(errors::CantaraImportUnknownFileExtensionError {
             file_extension: file_extension.to_string(),

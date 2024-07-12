@@ -59,7 +59,7 @@ impl Song {
         for part_box in &self.parts {
             let part = part_box.borrow();
             if part.part_type.eq(&part_type) {
-                count = count + 1;
+                count += 1;
             }
         }
         count
@@ -472,11 +472,11 @@ impl SongPart {
         let caps: regex::Captures = re.captures(&id_string).unwrap();
         let part_type: SongPartType = SongPartType::from_string(&caps[1]);
         let is_repetition: Option<Rc<RefCell<SongPart>>> = None;
-        let number: u32 = specific_number.unwrap_or_else(|| 1);
+        let number: u32 = specific_number.unwrap_or(1);
         SongPart {
-            id: id,
-            part_type: part_type,
-            number: number,
+            id,
+            part_type,
+            number,
             contents: Vec::new(),
             is_repetition_of: is_repetition,
             occurs_after: None,
@@ -505,31 +505,19 @@ impl SongPart {
     }
 
     pub fn is_repition(&self) -> Option<Rc<RefCell<SongPart>>> {
-        match &self.is_repetition_of {
-            Some(repetition) => Some(repetition.clone()),
-            None => None,
-        }
+        self.is_repetition_of.as_ref().map(|repetition| repetition.clone())
     }
 
     pub fn set_repition(&mut self, is_repetition: Option<Rc<RefCell<SongPart>>>) {
-        self.is_repetition_of = match is_repetition {
-            Some(is_repetition) => Some(is_repetition.clone()),
-            None => None,
-        };
+        self.is_repetition_of = is_repetition.map(|is_repetition| is_repetition.clone());
     }
 
     pub fn get_occurs_after(&self) -> Option<Rc<RefCell<SongPart>>> {
-        match &self.occurs_after {
-            Some(occurs_after) => Some(occurs_after.clone()),
-            None => None,
-        }
+        self.occurs_after.as_ref().map(|occurs_after| occurs_after.clone())
     }
 
     pub fn set_occurs_after(&mut self, occurs_after: Option<Rc<RefCell<SongPart>>>) {
-        self.occurs_after = match occurs_after {
-            Some(occurs_after) => Some(occurs_after.clone()),
-            None => None,
-        }
+        self.occurs_after = occurs_after.map(|occurs_after| occurs_after.clone())
     }
 }
 
@@ -548,8 +536,8 @@ pub struct PartOrder {
 impl PartOrder {
     pub fn new(name: PartOrderName, partorderrule: PartOrderRule) -> PartOrder {
         PartOrder {
-            name: name,
-            partorderrule: partorderrule,
+            name,
+            partorderrule,
         }
     }
     /// Create a PartOrder which is guessed by the song structure (the parts in the song)
@@ -573,10 +561,10 @@ impl PartOrder {
         // TODO: If the song has no refrain or bridge, it is likely that the song has the structure VerseRefrainBridgeRefrain
 
         // In every other case, we have a custom song structure
-        return PartOrder::new(
+        PartOrder::new(
             PartOrderName::Default,
             PartOrderRule::Custom(song.parts.clone()),
-        );
+        )
     }
 }
 
