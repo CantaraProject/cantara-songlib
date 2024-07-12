@@ -1,10 +1,16 @@
+//! The importer module contains functions for importing songs from different formats.
+//! Specific submodules are used for different file formats.
+
+/// This module contains defined errors which may occur during the import process.
 mod errors;
+
+/// This module contains functions for importing classic song files.
 mod classic_song;
 
-use std::error::Error;
-use std::path::Path;
-use std::ffi::OsStr;
 use crate::song::Song;
+use std::error::Error;
+use std::ffi::OsStr;
+use std::path::Path;
 
 /// Imports a song from a file.
 /// The function reads the content of the file and determines the file format by its extension.
@@ -30,7 +36,10 @@ pub fn import_song_from_file(file_path: &str) -> Result<Song, Box<dyn Error>> {
     }
     let content: String = content_wraped.unwrap();
 
-    let file_extension: &str = Path::new(file_path).extension().and_then(OsStr::to_str).unwrap();
+    let file_extension: &str = Path::new(file_path)
+        .extension()
+        .and_then(OsStr::to_str)
+        .unwrap();
     match file_extension {
         "song" => {
             let wraped_song: Result<Song, Box<dyn Error>> = classic_song::import_song(&content);
@@ -39,12 +48,17 @@ pub fn import_song_from_file(file_path: &str) -> Result<Song, Box<dyn Error>> {
             }
             let mut song: Song = wraped_song.unwrap();
             if song.title.is_empty() {
-                let title: &str = Path::new(file_path).file_stem().and_then(OsStr::to_str).unwrap();
+                let title: &str = Path::new(file_path)
+                    .file_stem()
+                    .and_then(OsStr::to_str)
+                    .unwrap();
                 song.title = title.to_string();
             }
-            return Ok(song)            
-        },
-        _ => Err(Box::new(errors::CantaraImportUnknownFileExtensionError { file_extension: file_extension.to_string() }))
+            return Ok(song);
+        }
+        _ => Err(Box::new(errors::CantaraImportUnknownFileExtensionError {
+            file_extension: file_extension.to_string(),
+        })),
     }
 }
 

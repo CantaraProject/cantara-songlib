@@ -17,7 +17,7 @@ impl std::error::Error for CantaraImportNoContentError {
 
 #[derive(Debug, Clone)]
 pub struct CantaraImportUnknownFileExtensionError {
-    pub file_extension: String
+    pub file_extension: String,
 }
 
 impl fmt::Display for CantaraImportUnknownFileExtensionError {
@@ -34,7 +34,7 @@ impl std::error::Error for CantaraImportUnknownFileExtensionError {
 
 #[derive(Debug, Clone)]
 pub struct CantaraImportUnknownBlockError {
-    pub block: String
+    pub block: String,
 }
 
 impl fmt::Display for CantaraImportUnknownBlockError {

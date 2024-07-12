@@ -1,5 +1,9 @@
 [package]
 name = "cantara-songlib"
+authors = ["Jan Martin Reckel jm.reckel@t-online.de"]
+description = "Import, manage and export songs in various formats"
+keywords = ["music", "lilypond", "sheets"]
+license = "GPL-3.0"
 version = "0.1.0"
 edition = "2021"
 

@@ -1,13 +1,10 @@
 extern crate regex;
+use core::fmt;
 use regex::Regex;
-use std::{
-    cell::RefCell, 
-    collections::HashMap, 
-    rc::Rc
-};
+use std::{cell::RefCell, collections::HashMap, rc::Rc};
 
 extern crate serde;
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 
 /// Object which represents a song in Cantara
 #[derive(Clone, Serialize, Deserialize, PartialEq, Debug)]
@@ -41,9 +38,7 @@ impl Song {
 
     /// Add a part to the song
     pub fn add_part(&mut self, part: SongPart) {
-        self.parts.push(
-            Rc::new(RefCell::new(part))
-        );
+        self.parts.push(Rc::new(RefCell::new(part)));
     }
 
     /// Get the number of parts of a specific type
@@ -53,21 +48,21 @@ impl Song {
     /// The number of parts of the given type
     /// # Example
     /// ```
-    /// use cantara_songlib::song::{Song, SongPart, SongPartType};
-    /// let mut song = cantara_songlib::song::Song::new("Test Song");
-    /// let part = cantara_songlib::song::SongPart::new("verse.1", None);
+    /// use cantara_songlib::song::{Song, SongPart, SongPartType, SongPartId};
+    /// let mut song = Song::new("Test Song");
+    /// let part = SongPart::new(SongPartId::parse("verse.1").unwrap(), None);
     /// song.add_part(part);
-    /// assert_eq!(song.get_part_count(cantara_songlib::song::SongPartType::Verse), 1);
+    /// assert_eq!(song.get_part_count(SongPartType::Verse), 1);
     /// ```
     pub fn get_part_count(&self, part_type: SongPartType) -> u32 {
-       let mut count = 0;
-       for part_box in &self.parts {
+        let mut count = 0;
+        for part_box in &self.parts {
             let part = part_box.borrow();
             if part.part_type.eq(&part_type) {
-                count = count + 1; 
+                count = count + 1;
             }
-       }
-       count
+        }
+        count
     }
 
     /// Add a song part of a specific type
@@ -86,7 +81,8 @@ impl Song {
             part_type.to_string(),
             specific_number.unwrap_or_else(|| self.get_part_count(part_type) + 1)
         );
-        let part: SongPart = SongPart::new(&id, specific_number);
+        
+        let part: SongPart = SongPart::new(SongPartId::parse(&id).unwrap(), specific_number);
         self.add_part(part);
         // Unwrap is safe here, because we just added the part
         self.parts.last().unwrap().clone()
@@ -97,19 +93,19 @@ impl Song {
     /// A list of all ContentTypes that are used in the song
     /// # Example
     /// ```
-    /// use cantara_songlib::song::{Song, SongPart, SongPartContent, SongPartContentType, LyricLanguage};
-    /// let mut song = cantara_songlib::song::Song::new("Test Song");
-    /// let mut part = cantara_songlib::song::SongPart::new("verse.1", Some(1));
-    /// part.add_content(cantara_songlib::song::SongPartContent {
-    ///   voice_type: cantara_songlib::song::SongPartContentType::Lyrics {
-    ///     language: cantara_songlib::song::LyricLanguage::Default
+    /// use cantara_songlib::song::{Song, SongPart, SongPartContent, SongPartContentType, LyricLanguage, SongPartId};
+    /// let mut song = Song::new("Test Song");
+    /// let mut part = SongPart::new(SongPartId::parse("verse.1").unwrap(), Some(1));
+    /// part.add_content(SongPartContent {
+    ///   voice_type: SongPartContentType::Lyrics {
+    ///     language: LyricLanguage::Default
     ///   },
     ///   content: "Amazing Grace, how sweet the sound...".to_string(),
     /// });
     /// song.add_part(part);
-    /// let mut part = cantara_songlib::song::SongPart::new("chorus.1", Some(1));
-    /// part.add_content(cantara_songlib::song::SongPartContent {
-    ///  voice_type: cantara_songlib::song::SongPartContentType::LeadVoice,
+    /// let mut part = SongPart::new(SongPartId::parse("chorus.1").unwrap(), Some(1));
+    /// part.add_content(SongPartContent {
+    ///  voice_type: SongPartContentType::LeadVoice,
     /// content: "c4 d4 e4 f4 g4".to_string(),
     /// });
     /// song.add_part(part);
@@ -136,9 +132,9 @@ impl Song {
     /// A list of references to the song parts where the content was found
     /// # Example
     /// ```
-    /// use cantara_songlib::song::{Song, SongPart, SongPartContent, SongPartContentType, LyricLanguage};
+    /// use cantara_songlib::song::{Song, SongPart, SongPartContent, SongPartContentType, LyricLanguage, SongPartId};
     /// let mut song = Song::new("Test Song");
-    /// let mut part = SongPart::new("verse.1", Some(1));
+    /// let mut part = SongPart::new(SongPartId::parse("verse.1").unwrap(), Some(1));
     /// part.add_content(SongPartContent {
     ///  voice_type: SongPartContentType::Lyrics {
     ///     language: LyricLanguage::Default
@@ -147,7 +143,7 @@ impl Song {
     /// the sound...".to_string(),
     /// });
     /// song.add_part(part);
-    /// let mut part = SongPart::new("chorus.1", Some(1));
+    /// let mut part = SongPart::new(SongPartId::parse("chorus.1").unwrap(), Some(1));
     /// part.add_content(SongPartContent {
     /// voice_type: SongPartContentType::LeadVoice,
     /// content: "c4 d4 e4 f4 g4".to_string(),
@@ -189,7 +185,7 @@ impl Song {
             // We need to clone the reference here to avoid consuming of the reference
             let cloned_part_refcall = part_refcall.clone();
             let part = cloned_part_refcall.borrow();
-            if part.id == id {
+            if part.id.get_id() == id {
                 return Some(part_refcall.clone());
             }
         }
@@ -212,14 +208,14 @@ impl Song {
     /// A list of all parts of the song
     /// # Example
     /// ```
-    /// use cantara_songlib::song::{Song, SongPart, SongPartContent, SongPartContentType, LyricLanguage};
+    /// use cantara_songlib::song::{Song, SongPart, SongPartContent, SongPartContentType, LyricLanguage, SongPartId};
     /// let mut song = Song::new("Amazing Grace");
-    /// let mut part = SongPart::new("verse.1", Some(1));
+    /// let mut part = SongPart::new(SongPartId::parse("verse.1").unwrap(), Some(1));
     /// part.add_content(SongPartContent {
     /// voice_type: SongPartContentType::Lyrics {
     /// language: LyricLanguage::Default
     /// },
-    /// content: "Amazing Grace, how sweet the sound that saved a wretch like me! 
+    /// content: "Amazing Grace, how sweet the sound that saved a wretch like me!
     ///             I once was lost but now am found, was blind, but know I see!"
     /// .to_string(),
     /// });
@@ -245,7 +241,6 @@ impl Song {
     pub fn get_total_part_count(&self) -> usize {
         self.parts.len()
     }
-
 }
 
 /// All possible types of a song part. Some are repeatable (like refrains, etc.), some are not.
@@ -376,33 +371,115 @@ pub struct SongPartContent {
     pub content: String,
 }
 
-type SongPartId = String;
+/// The ID of a song part.
+/// The ID is in the format 'part_type.number' (e.g. 'verse.1')
+/// Use the parse method to create a SongPartId from a string.
+/// In addition, an ID should be unique inside a song. This can only be checked after a SongPart with a certain SongId has been added to a Song.
+/// Use the unique method to determine whether the SongPartId has been successfully defined as unique.
+#[derive(Clone, Serialize, Deserialize, PartialEq, Debug)]
+pub struct SongPartId {
+    /// The actual ID of the song part, proven to have a correct format
+    id: String,
+    /// Whether the ID is unique in the song
+    /// This is only checked after the SongPartId has been added to a Song
+    /// If the ID is not unique, the SongPartId is not valid
+    /// If the ID is unique, the SongPartId is valid
+    checked_unique: bool,
+}
+
+impl SongPartId {
+    /// Parse the ID of a song part by a given &str. The id has to be in the format 'part_type.number' (e.g. 'verse.1')
+    /// # Arguments
+    /// * `id` - The ID of the song part
+    /// # Returns
+    /// An Option with the SongPartId, if the ID is in the correct format
+    /// or None, if the ID is not in the correct format.
+    /// # Example
+    /// ```
+    /// use cantara_songlib::song::SongPartId;
+    /// let id = SongPartId::parse("verse.1");
+    /// assert_eq!(id.unwrap().to_string(), "verse.1");
+    /// let id = SongPartId::parse("abcdefg");
+    /// assert_eq!(id, None);
+    /// ```
+    /// # Panics
+    /// If the ID is not in the format 'part_type.number' (e.g. 'verse.1')
+    /// # Note
+    /// The ID is case-insensitive
+    pub fn parse(id: &str) -> Option<SongPartId> {
+        let re: Regex = Regex::new(r"([a-zA-Z]+)\.(\d+)").unwrap();
+        let caps_found: bool = re.captures(id).is_some();
+        match caps_found {
+            true => Some(SongPartId {
+                id: id.to_string(),
+                checked_unique: false,
+            }),
+            false => None,
+        }
+    }
+
+    /// Get whether the SongPartId is unique in a song
+    pub fn get_checked_unique(&self) -> bool {
+        self.checked_unique
+    }
+
+    /// Set whether the SongPartId is unique in a song
+    /// # Arguments
+    /// * `checked_unique` - Whether the SongPartId is unique in a song
+    /// # Note
+    /// This is only used internally by the Song struct to set the checked_unique flag
+    pub fn set_checked_unique(&mut self, checked_unique: bool) {
+        self.checked_unique = checked_unique;
+    }
+
+    /// Get the ID of the SongPartId
+    /// # Returns
+    /// The ID of the SongPartId as a string
+    pub fn get_id(&self) -> String {
+        self.id.clone()
+    }
+
+}
+
+impl fmt::Display for SongPartId {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{}", self.id)
+    }
+}
 
 /// A part of a song, which can contain multiple voices (e.g. lyrics, chords, etc.)
 #[derive(Clone, Serialize, Deserialize, PartialEq, Debug)]
 pub struct SongPart {
+    /// Every song part has an unique ID which is used to identify the part.
+    /// The ID is in the format 'part_type.number' (e.g. 'verse.1')
     pub id: SongPartId,
+    /// The type of the part (e.g. Verse, Chorus, Bridge, etc.)
     pub part_type: SongPartType,
+    /// The number of the part (e.g. 1 for 'verse.1')
     pub number: u32,
+    /// All the contents which the part contains (e.g. lyrics, chords, etc.)
     pub contents: Vec<SongPartContent>,
     /// defines whether this part is a repetition of a previous part
-    pub is_repetition_of: Option<String>,
+    pub is_repetition_of: Option<Rc<RefCell<SongPart>>>,
+    occurs_after: Option<Rc<RefCell<SongPart>>>,
 }
 
 impl SongPart {
-    pub fn new(id: &str, specific_number: Option<u32>) -> SongPart {
+    pub fn new(id: SongPartId, specific_number: Option<u32>) -> SongPart {
         // get part_type from a regex in the format ('part_type'.'number')
         let re: Regex = Regex::new(r"([a-zA-Z]+)\.(\d+)").unwrap();
-        let caps: regex::Captures = re.captures(id).unwrap();
+        let id_string = id.to_string();
+        let caps: regex::Captures = re.captures(&id_string).unwrap();
         let part_type: SongPartType = SongPartType::from_string(&caps[1]);
-        let is_repition:Option<String> = None;
+        let is_repetition: Option<Rc<RefCell<SongPart>>> = None;
         let number: u32 = specific_number.unwrap_or_else(|| 1);
         SongPart {
-            id: id.to_string(),
+            id: id,
             part_type: part_type,
             number: number,
             contents: Vec::new(),
-            is_repetition_of: is_repition,
+            is_repetition_of: is_repetition,
+            occurs_after: None,
         }
     }
 
@@ -427,12 +504,32 @@ impl SongPart {
         self.part_type.is_repeatable()
     }
 
-    pub fn is_repition(&self) -> Option<SongPartId> {
-        self.is_repetition_of.clone()
+    pub fn is_repition(&self) -> Option<Rc<RefCell<SongPart>>> {
+        match &self.is_repetition_of {
+            Some(repetition) => Some(repetition.clone()),
+            None => None,
+        }
     }
 
-    pub fn set_repition(&mut self, is_repition: Option<SongPartId>) {
-        self.is_repetition_of = is_repition;
+    pub fn set_repition(&mut self, is_repetition: Option<Rc<RefCell<SongPart>>>) {
+        self.is_repetition_of = match is_repetition {
+            Some(is_repetition) => Some(is_repetition.clone()),
+            None => None,
+        };
+    }
+
+    pub fn get_occurs_after(&self) -> Option<Rc<RefCell<SongPart>>> {
+        match &self.occurs_after {
+            Some(occurs_after) => Some(occurs_after.clone()),
+            None => None,
+        }
+    }
+
+    pub fn set_occurs_after(&mut self, occurs_after: Option<Rc<RefCell<SongPart>>>) {
+        self.occurs_after = match occurs_after {
+            Some(occurs_after) => Some(occurs_after.clone()),
+            None => None,
+        }
     }
 }
 
@@ -462,18 +559,24 @@ impl PartOrder {
     /// A PartOrder which is guessed by the song structure
     pub fn from_guess(song: &Song) -> PartOrder {
         let song_part_count = song.get_total_part_count();
-        
+
         // If the song has less then two parts, return Custom with the parts in the order they were added
         if song_part_count < 2 {
-            return PartOrder::new(PartOrderName::Default, PartOrderRule::Custom(song.parts.clone()));
+            return PartOrder::new(
+                PartOrderName::Default,
+                PartOrderRule::Custom(song.parts.clone()),
+            );
         }
-        
+
         // TODO: If the song begins with a verse, it is likely that the song has the structure VerseRefrainBridgeRefrain
         // TODO: If the song begins with a refrain, it is likely that the song has the structure RefrainVerseBridgeRefrain
         // TODO: If the song has no refrain or bridge, it is likely that the song has the structure VerseRefrainBridgeRefrain
-        
+
         // In every other case, we have a custom song structure
-        return PartOrder::new(PartOrderName::Default, PartOrderRule::Custom(song.parts.clone()));
+        return PartOrder::new(
+            PartOrderName::Default,
+            PartOrderRule::Custom(song.parts.clone()),
+        );
     }
 }
 
@@ -485,17 +588,17 @@ pub enum PartOrderRule {
     /// However, refrains and bridges are not necessary parts of the song.
     /// If the song does not contain a refrain or a bridge, all the stanzas will just be played after each other.
     /// If the song does not contain a bridge, the refrain will be played after the last verse.
-    /// In this rule, only one refrain and one bridge are allowed. 
+    /// In this rule, only one refrain and one bridge are allowed.
     /// Use Custom for more complex song structures.
     VerseRefrainBridgeRefrain,
     /// This represents a song which begins with a refrain followed by the stanza. The refrain is repeated after each verse.
     /// Before the last refrain, a bridge is played.
     /// However, a bridges is not necessary to be part of the song.
     /// If the song does not contain a bridge, the refrain will be played after the last verse.
-    /// In this rule, only one refrain and one bridge are allowed. 
+    /// In this rule, only one refrain and one bridge are allowed.
     /// Use Custom for more complex song structures.
     RefrainVerseBridgeRefrain,
-    /// Any song structure which is more complex than the other rules. 
+    /// Any song structure which is more complex than the other rules.
     /// In that case, you need to define the order of the parts manually.
     Custom(Vec<Rc<RefCell<SongPart>>>),
 }
@@ -524,7 +627,7 @@ mod tests {
 
     #[test]
     fn test_new_song_part() {
-        let part = SongPart::new("verse.1", Some(1));
+        let part = SongPart::new(SongPartId::parse("verse.1").unwrap(), Some(1));
         assert_eq!(part.part_type, SongPartType::Verse);
         assert_eq!(part.number, 1);
     }
@@ -532,7 +635,7 @@ mod tests {
     #[test]
     fn test_adding_song_parts() {
         let mut song: Song = Song::new("Amazing Grace");
-        let part: SongPart = SongPart::new("verse.1", None);
+        let part: SongPart = SongPart::new(SongPartId::parse("verse.1").unwrap(), None);
         song.add_part(part);
         assert_eq!(song.parts.len(), 1);
         dbg!(song.parts);
