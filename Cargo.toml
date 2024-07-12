@@ -22,3 +22,4 @@ panic = "abort"
 [dependencies]
 regex = "1.10.5"
 serde = { version = "1.0.203", features = ["derive", "rc"] }
+lazy_static = "1.5.0"

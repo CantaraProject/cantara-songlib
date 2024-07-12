@@ -3,13 +3,22 @@
 //! You can find a documentation here: https://www.cantara.app/tutorial/where-to-get-the-songs/index.html#the-song-file-format
 
 use std::error::Error;
+use std::{cell::RefCell, rc::Rc};
+use lazy_static::lazy_static;
 
 extern crate regex;
 use regex::Regex;
 
 use crate::importer::errors::CantaraImportNoContentError;
 use crate::song::{
-    LyricLanguage, Song, SongPart, SongPartContent, SongPartContentType, SongPartType,
+    LyricLanguage, 
+    Song, 
+    SongPart, 
+    SongPartContent, 
+    SongPartContentType, 
+    SongPartType, 
+    PartOrder, 
+    SongPartId,
 };
 
 fn parse_block(block: &str, song: Song) -> Result<Song, Box<dyn Error>> {
@@ -21,31 +30,50 @@ fn parse_block(block: &str, song: Song) -> Result<Song, Box<dyn Error>> {
 
     // If first letter is a #, then parse the tags
     if block.starts_with('#') {
-        let tags_regex = Regex::new(r"#(\w+):\s*(.+)$").unwrap();
-
-        let _ = tags_regex
+        dbg!("Parsing tags");
+        lazy_static! {
+            static ref TAGS_REGEX: Regex = Regex::new(r"#(\w+):\s*(.+)$").unwrap();
+        }
+        let tags_regex = &TAGS_REGEX;
+        tags_regex
             .captures_iter(block)
-            .map(|capture: regex::Captures| {
+            .for_each(|capture: regex::Captures| {
                 let tag: &str = capture.get(1).unwrap().as_str();
                 let value: &str = capture.get(2).unwrap().as_str();
-                cloned_song.add_tag(tag, value);
+                let tag_lowercase = tag.to_lowercase();
+                dbg!((tag_lowercase.clone(), value));
+                cloned_song.add_tag(tag_lowercase.as_str(), value);
+                if tag_lowercase == "title" {
+                    cloned_song.title = value.to_string();
+                }
             });
         return Ok(cloned_song);
     }
 
-    let song_part_reference = cloned_song.add_part_of_type(SongPartType::Verse, None);
-    let mut song_part: std::cell::RefMut<SongPart> = song_part_reference.borrow_mut();
+    // We will find first whether the content is already in the song, if yes, we have most likely a chorus.
+    // If not, we will add a new verse.
+    // If the content is already in the song, we will change the part type to chorus and add the content as a new chorus part.
+    
+    let content_vector = song.find_content_in_part(block);
+    let (part_type, part_reference) = match content_vector.len() {
+        0 => (SongPartType::Verse, None),
+        _ => (SongPartType::Chorus, Some(content_vector.last().unwrap().clone())),
+    };
 
-    {
-        let lyric_language: LyricLanguage = LyricLanguage::Default;
-        let lyrics_content: SongPartContent = SongPartContent {
-            voice_type: SongPartContentType::Lyrics {
-                language: lyric_language,
-            },
-            content: block.to_string(),
-        };
+    let lyric_language: LyricLanguage = LyricLanguage::Default;
+    let lyrics_content: SongPartContent = SongPartContent {
+        voice_type: SongPartContentType::Lyrics {
+            language: lyric_language,
+        },
+        content: block.to_string(),
+    };
+    
+    if part_reference.is_none() {    
+        let song_part_reference: Rc<RefCell<SongPart>> = cloned_song.add_part_of_type(part_type, None);
 
+        let mut song_part: std::cell::RefMut<SongPart> = song_part_reference.borrow_mut();
         let _ = &mut song_part.add_content(lyrics_content);
+        song_part.set_repition(part_reference);
     }
 
     Ok(cloned_song)
@@ -59,36 +87,24 @@ pub fn import_song(content: &str) -> Result<Song, Box<dyn Error>> {
     if content.is_empty() {
         return Err(Box::new(CantaraImportNoContentError {}));
     }
+    dbg!(content);
+
     // Get the title either from the content or the filename
-    let title_regex = Regex::new(r"#title:\s*(.+?)$").unwrap();
+    let title_regex = Regex::new(r"#title:\s*(.+?)\n").unwrap();
 
     let title: &str = match title_regex.captures(content) {
         Some(title_captures) => title_captures.get(1).unwrap().as_str(),
         None => "",
     };
 
-    let song: Song = Song::new(title);
+    let mut song: Song = Song::new(title);
 
     // Parse the blocks
-    let parts_iterator: std::str::Split<&str> = content.split("\n\n");
-    let parts: Vec<&str> = parts_iterator.collect();
-
-    for (index, part) in parts.iter().enumerate() {
-        // Determine if the same part has been repeated
-        let mut part_index: usize = 0;
-        let _ = parts[0..index].iter().map(|p| {
-            if p == part {
-                part_index += 1;
-            }
-        }); //Hier weitermachen
-        if parts[0..index].contains(part) {
-            part_index = parts[0..index].iter().filter(|&p| p == part).count();
-        }
+    for part in  content.split("\n\n") {
+        dbg!(part);
+        song = parse_block(part, song.clone()).unwrap();
     }
-
-    let song = parts
-        .iter()
-        .fold(song, |song, part| parse_block(part, song).unwrap());
+    
     Ok(song)
 }
 
@@ -101,5 +117,16 @@ mod test {
         let content: String = String::from("#title: Test Song");
         let song = import_song(&content).unwrap();
         assert_eq!(song.title, "Test Song");
+    }
+
+    #[test]
+    fn test_import_song_with_tags() {
+        let content: String = String::from(
+            "#title: Test Song
+            #author: Test Author"
+        );
+        let song = import_song(&content).unwrap();
+        assert_eq!(song.title, "Test Song");
+        assert_eq!(song.get_tag("author").unwrap(), "Test Author");
     }
 }
