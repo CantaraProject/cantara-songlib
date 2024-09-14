@@ -123,15 +123,22 @@ pub fn import_song(content: &str) -> Result<Song, Box<dyn Error>> {
     for line in content.trim().lines(){
         match line.trim() {
             "" => {
+                if part.is_empty() {
+                    continue;
+                }
                 song = parse_block(&part, song.clone()).unwrap();
                 dbg!("Clearing part", &part);
                 part.clear();
             }
             _ => {
-                part.push_str(line);
+                part.push_str(line.trim());
                 part.push_str("\n");
             }
         }
+    }
+    if !(part.is_empty()) {
+        song = parse_block(&part, song.clone()).unwrap();
+        part.clear();
     }
     
     Ok(song)
