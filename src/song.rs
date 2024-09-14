@@ -70,7 +70,7 @@ impl Song {
     /// * `part_type` - The type of the part
     /// * `specific_number` - The number of the part (e.g. 1 for "verse.1")
     /// # Returns
-    /// A countable reference in the form Rc<RefCell<SongPart>> of the created song part
+    /// A countable reference in the form `Rc<RefCell<SongPart>>` of the created song part
     pub fn add_part_of_type(
         &mut self,
         part_type: SongPartType,

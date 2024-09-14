@@ -21,7 +21,7 @@ use std::path::Path;
 /// * `file_path` - A string slice that holds the path to the file.
 /// # Returns
 /// A Result object that holds either a Song object or an error.
-/// The error is of type Box<dyn Error>.
+/// The error is of type `Box<dyn Error>`.
 /// The error can be of type CantaraImportUnknownFileExtensionError.
 /// # Example
 /// ```
@@ -59,6 +59,24 @@ pub fn import_song_from_file(file_path: &str) -> Result<Song, Box<dyn Error>> {
         _ => Err(Box::new(errors::CantaraImportUnknownFileExtensionError {
             file_extension: file_extension.to_string(),
         })),
+    }
+}
+
+
+/// Loads a song from a filename and returns it as JSON object or gives back an error if there has been any error during the process
+/// # Parameters
+/// - `file_path`: a `&str` with the filepath of the file which is to load
+/// # Returns
+/// - a Result with the song if everything went well, or an error if an error occured.
+pub fn get_song_from_file_as_json(file_path: &str) -> Result<String, Box<dyn Error>> {
+    match import_song_from_file(file_path) {
+        Ok(song) => {
+            match serde_json::to_string_pretty(&song) {
+                Ok(string) => Ok(string),
+                Err(error) => Err(Box::new(error))
+            }            
+        }
+        Err(error) => Err(error)
     }
 }
 

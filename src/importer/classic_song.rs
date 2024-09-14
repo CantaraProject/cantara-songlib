@@ -1,6 +1,6 @@
 //! This module contains functions to import songs from the classic Cantara song format.
 //! The Cantara song format is a simple text format that is used to write songs in plain text files.
-//! You can find a documentation here: https://www.cantara.app/tutorial/where-to-get-the-songs/index.html#the-song-file-format
+//! You can find a documentation here: <https://www.cantara.app/tutorial/where-to-get-the-songs/index.html#the-song-file-format>
 
 use std::error::Error;
 use std::{cell::RefCell, rc::Rc};
@@ -193,6 +193,15 @@ mod test {
         assert_eq!(song.title, "Amazing Grace");
         assert_eq!(song.get_tag("author").unwrap(), "John Newton");
         assert_eq!(song.get_part_count(SongPartType::Verse), 3)
+    }
+
+    #[test]
+    fn test_song_with_refrain() {
+        let song: Song = import_song_from_file("testfiles/O What A Savior That He Died For Me.song").unwrap();
+        assert_eq!(song.title, "O What A Savior That He Died For Me");
+        assert_eq!(song.get_part_count(SongPartType::Verse), 4);
+        assert_eq!(song.get_part_count(SongPartType::Chorus), 1);
+        dbg!(song);
     }
 
 }
