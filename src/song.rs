@@ -192,6 +192,20 @@ impl Song {
         None
     }
 
+    /// Gets the part by the index (the order)
+    /// # Arguments
+    /// * `index` - the index of the part
+    /// # Returns
+    /// An Option with the reference to the song part with the given index (or None if no song part was found)
+    pub fn get_part_by_index(&self, index: usize) -> Option<Rc<RefCell<SongPart>>> {
+        if &self.parts.len() >= &index {
+            None
+        } else {
+            let cloned_part_refcall = &self.parts.get(index).unwrap().clone();
+            Some(cloned_part_refcall.clone())
+        }
+    }
+
     pub fn get_parts_by_type(&self, part_type: SongPartType) -> Vec<Rc<RefCell<SongPart>>> {
         let mut parts: Vec<Rc<RefCell<SongPart>>> = Vec::new();
         for part_refcall in &self.parts {
@@ -564,9 +578,31 @@ impl PartOrder {
             );
         }
 
-        // TODO: If the song begins with a verse, it is likely that the song has the structure VerseRefrainBridgeRefrain
-        // TODO: If the song begins with a refrain, it is likely that the song has the structure RefrainVerseBridgeRefrain
-        // TODO: If the song has no refrain or bridge, it is likely that the song has the structure VerseRefrainBridgeRefrain
+        // If the song begins with a verse, it is likely that the song has the structure VerseRefrainBridgeRefrain
+        let first_part_type: SongPartType = song.get_part_by_index(0).unwrap().borrow().get_type();
+
+        if first_part_type == SongPartType::Verse {
+            return PartOrder::new(
+                PartOrderName::Default,
+                PartOrderRule::VerseRefrainBridgeRefrain,
+            );
+        }
+        
+        // If the song begins with a refrain, it is likely that the song has the structure RefrainVerseBridgeRefrain
+        else if first_part_type == SongPartType::Refrain {
+            return PartOrder::new(
+                PartOrderName::Default,
+                PartOrderRule::RefrainVerseBridgeRefrain,
+            );
+        }
+
+        // If the song has no refrain or bridge, it is likely that the song has the structure VerseRefrainBridgeRefrain
+        if (song.get_part_count(SongPartType::Refrain) == 0) || (song.get_part_count(SongPartType::Bridge) == 0) {
+            return PartOrder::new(
+                PartOrderName::Default,
+                PartOrderRule::VerseRefrainBridgeRefrain,
+            );
+        }
 
         // In every other case, we have a custom song structure
         PartOrder::new(
