@@ -146,6 +146,8 @@ pub fn import_song(content: &str) -> Result<Song, Box<dyn Error>> {
 
 #[cfg(test)]
 mod test {
+    use crate::importer::import_song_from_file;
+
     use super::*;
 
     #[test]
@@ -184,4 +186,13 @@ mod test {
         let song = import_song(&content).unwrap();
         assert_eq!(song.get_part_count(SongPartType::Verse), 2);
     }
+
+    #[test]
+    fn test_file_amazing_grace() {
+        let song: Song = import_song_from_file("testfiles/Amazing Grace.song").unwrap();
+        assert_eq!(song.title, "Amazing Grace");
+        assert_eq!(song.get_tag("author").unwrap(), "John Newton");
+        assert_eq!(song.get_part_count(SongPartType::Verse), 3)
+    }
+
 }
