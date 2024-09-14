@@ -198,7 +198,7 @@ impl Song {
     /// # Returns
     /// An Option with the reference to the song part with the given index (or None if no song part was found)
     pub fn get_part_by_index(&self, index: usize) -> Option<Rc<RefCell<SongPart>>> {
-        if &self.parts.len() >= &index {
+        if self.parts.len() >= index {
             None
         } else {
             let cloned_part_refcall = &self.parts.get(index).unwrap().clone();
@@ -356,11 +356,9 @@ pub enum SongPartContentType {
 
 impl SongPartContentType {
     pub fn is_lyrics(&self) -> bool {
-        match self {
-            SongPartContentType::Lyrics { .. } => true,
-            _ => false,
-        }
+        matches!(self, SongPartContentType::Lyrics { .. })
     }
+
     pub fn to_string(&self) -> String {
         match self {
             SongPartContentType::LeadVoice => "LeadVoice".to_string(),
@@ -508,10 +506,9 @@ impl SongPart {
     }
 
     pub fn has_lyrics(&self) -> bool {
-        self.contents.iter().any(|voice| match voice.voice_type {
-            SongPartContentType::Lyrics { .. } => true,
-            _ => false,
-        })
+        self.contents.iter().any(|voice| 
+            matches!(voice.voice_type,SongPartContentType::Lyrics { .. })
+        )
     }
 
     pub fn is_repeatable(&self) -> bool {
@@ -519,19 +516,19 @@ impl SongPart {
     }
 
     pub fn is_repition(&self) -> Option<Rc<RefCell<SongPart>>> {
-        self.is_repetition_of.as_ref().map(|repetition| repetition.clone())
+        self.is_repetition_of.clone()
     }
 
     pub fn set_repition(&mut self, is_repetition: Option<Rc<RefCell<SongPart>>>) {
-        self.is_repetition_of = is_repetition.map(|is_repetition| is_repetition.clone());
+        self.is_repetition_of = is_repetition;
     }
 
     pub fn get_occurs_after(&self) -> Option<Rc<RefCell<SongPart>>> {
-        self.occurs_after.as_ref().map(|occurs_after| occurs_after.clone())
+        self.occurs_after.clone()
     }
 
     pub fn set_occurs_after(&mut self, occurs_after: Option<Rc<RefCell<SongPart>>>) {
-        self.occurs_after = occurs_after.map(|occurs_after| occurs_after.clone())
+        self.occurs_after = occurs_after
     }
 
     pub fn set_type(&mut self, part_type: SongPartType) {

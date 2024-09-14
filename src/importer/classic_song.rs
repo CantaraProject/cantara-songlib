@@ -132,7 +132,7 @@ pub fn import_song(content: &str) -> Result<Song, Box<dyn Error>> {
             }
             _ => {
                 part.push_str(line.trim());
-                part.push_str("\n");
+                part.push('\n');
             }
         }
     }
