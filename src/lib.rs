@@ -23,6 +23,10 @@ pub mod song;
 /// - The `importer` module contains functions for importing songs from different formats.
 pub mod importer;
 
+/// The filetypes which are supported as input/output
+pub mod filetypes;
+
+
 #[cfg(test)]
 mod tests {
     use super::song::Song;
