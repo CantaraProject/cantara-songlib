@@ -28,7 +28,6 @@ fn parse_block(block: &str, song: Song) -> Result<Song, Box<dyn Error>> {
 
     // If first letter is a #, then parse the tags
     if block.starts_with('#') {
-        dbg!("Parsing tags");
         
         // With that we make sure that the regex is only compiled once.
         let tags_regex = { 
@@ -47,7 +46,6 @@ fn parse_block(block: &str, song: Song) -> Result<Song, Box<dyn Error>> {
                 let tag: &str = capture.get(1).unwrap().as_str();
                 let value: &str = capture.get(2).unwrap().as_str();
                 let tag_lowercase = tag.to_lowercase();
-                dbg!((tag_lowercase.clone(), value));
                 cloned_song.add_tag(tag_lowercase.as_str(), value);
                 if tag_lowercase == "title" {
                     cloned_song.title = value.to_string();
@@ -80,11 +78,14 @@ fn parse_block(block: &str, song: Song) -> Result<Song, Box<dyn Error>> {
         let mut song_part: std::cell::RefMut<SongPart> = song_part_reference.borrow_mut();
         let _ = &mut song_part.add_content(lyrics_content);
         song_part.set_repition(part_reference);
-        dbg!("Added part", song_part);
     } else {
         let unwrapped_reference = part_reference.unwrap();
         let mut previous_song_part: std::cell::RefMut<SongPart> = unwrapped_reference.borrow_mut();
-        let _ = &mut previous_song_part.set_type(SongPartType::Chorus);
+        {
+            let _ = &mut previous_song_part.set_type(SongPartType::Chorus);
+        }
+        previous_song_part.number = 1;
+        let _ = &mut previous_song_part.update_id();
     }
 
     Ok(cloned_song)
@@ -127,7 +128,6 @@ pub fn import_song(content: &str) -> Result<Song, Box<dyn Error>> {
                     continue;
                 }
                 song = parse_block(&part, song.clone()).unwrap();
-                dbg!("Clearing part", &part);
                 part.clear();
             }
             _ => {

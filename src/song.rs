@@ -50,8 +50,7 @@ impl Song {
     /// ```
     /// use cantara_songlib::song::{Song, SongPart, SongPartType, SongPartId};
     /// let mut song = Song::new("Test Song");
-    /// let part = SongPart::new(SongPartId::parse("verse.1").unwrap(), None);
-    /// song.add_part(part);
+    /// song.add_part_of_type(SongPartType::Verse, None);
     /// assert_eq!(song.get_part_count(SongPartType::Verse), 1);
     /// ```
     pub fn get_part_count(&self, part_type: SongPartType) -> u32 {
@@ -74,12 +73,16 @@ impl Song {
     pub fn add_part_of_type(
         &mut self,
         part_type: SongPartType,
-        specific_number: Option<u32>,
+        specific_number_option: Option<u32>,
     ) -> Rc<RefCell<SongPart>> {
-        let id = format!(
+        let specific_number = match specific_number_option {
+            Some(number) => number,
+            None => self.get_part_count(part_type) + 1
+        };
+        let id: String = format!(
             "{}.{}",
             part_type.to_string(),
-            specific_number.unwrap_or_else(|| self.get_part_count(part_type) + 1)
+            specific_number_option.unwrap_or_else(|| specific_number)
         );
         
         let part: SongPart = SongPart::new(SongPartId::parse(&id).unwrap(), specific_number);
@@ -95,7 +98,7 @@ impl Song {
     /// ```
     /// use cantara_songlib::song::{Song, SongPart, SongPartContent, SongPartContentType, LyricLanguage, SongPartId};
     /// let mut song = Song::new("Test Song");
-    /// let mut part = SongPart::new(SongPartId::parse("verse.1").unwrap(), Some(1));
+    /// let mut part = SongPart::new(SongPartId::parse("verse.1").unwrap(), 1);
     /// part.add_content(SongPartContent {
     ///   voice_type: SongPartContentType::Lyrics {
     ///     language: LyricLanguage::Default
@@ -103,7 +106,7 @@ impl Song {
     ///   content: "Amazing Grace, how sweet the sound...".to_string(),
     /// });
     /// song.add_part(part);
-    /// let mut part = SongPart::new(SongPartId::parse("chorus.1").unwrap(), Some(1));
+    /// let mut part = SongPart::new(SongPartId::parse("chorus.1").unwrap(), 1);
     /// part.add_content(SongPartContent {
     ///  voice_type: SongPartContentType::LeadVoice,
     /// content: "c4 d4 e4 f4 g4".to_string(),
@@ -134,7 +137,7 @@ impl Song {
     /// ```
     /// use cantara_songlib::song::{Song, SongPart, SongPartContent, SongPartContentType, LyricLanguage, SongPartId};
     /// let mut song = Song::new("Test Song");
-    /// let mut part = SongPart::new(SongPartId::parse("verse.1").unwrap(), Some(1));
+    /// let mut part = SongPart::new(SongPartId::parse("verse.1").unwrap(), 1);
     /// part.add_content(SongPartContent {
     ///  voice_type: SongPartContentType::Lyrics {
     ///     language: LyricLanguage::Default
@@ -143,7 +146,7 @@ impl Song {
     /// the sound...".to_string(),
     /// });
     /// song.add_part(part);
-    /// let mut part = SongPart::new(SongPartId::parse("chorus.1").unwrap(), Some(1));
+    /// let mut part = SongPart::new(SongPartId::parse("chorus.1").unwrap(), 1);
     /// part.add_content(SongPartContent {
     /// voice_type: SongPartContentType::LeadVoice,
     /// content: "c4 d4 e4 f4 g4".to_string(),
@@ -222,9 +225,9 @@ impl Song {
     /// A list of all parts of the song
     /// # Example
     /// ```
-    /// use cantara_songlib::song::{Song, SongPart, SongPartContent, SongPartContentType, LyricLanguage, SongPartId};
+    /// use cantara_songlib::song::{Song, SongPart, SongPartType, SongPartContent, SongPartContentType, LyricLanguage, SongPartId};
     /// let mut song = Song::new("Amazing Grace");
-    /// let mut part = SongPart::new(SongPartId::parse("verse.1").unwrap(), Some(1));
+    /// let mut part = SongPart::new(SongPartId::parse("verse.1").unwrap(), song.get_part_count(SongPartType::Verse)+1);
     /// part.add_content(SongPartContent {
     /// voice_type: SongPartContentType::Lyrics {
     /// language: LyricLanguage::Default
@@ -477,18 +480,17 @@ pub struct SongPart {
 }
 
 impl SongPart {
-    pub fn new(id: SongPartId, specific_number: Option<u32>) -> SongPart {
+    pub fn new(id: SongPartId, specific_number: u32) -> SongPart {
         // get part_type from a regex in the format ('part_type'.'number')
         let re: Regex = Regex::new(r"([a-zA-Z]+)\.(\d+)").unwrap();
         let id_string = id.to_string();
         let caps: regex::Captures = re.captures(&id_string).unwrap();
         let part_type: SongPartType = SongPartType::from_string(&caps[1]);
         let is_repetition: Option<Rc<RefCell<SongPart>>> = None;
-        let number: u32 = specific_number.unwrap_or(1);
         SongPart {
             id,
             part_type,
-            number,
+            number: specific_number,
             contents: Vec::new(),
             is_repetition_of: is_repetition,
             occurs_after: None,
@@ -537,6 +539,10 @@ impl SongPart {
 
     pub fn get_type(&self) -> SongPartType {
         self.part_type
+    }
+
+    pub fn update_id(&mut self) {
+        self.id = SongPartId::parse(&format!("{}.{}", self.part_type.to_string(), self.number.to_string())).unwrap();
     }
 }
 
@@ -656,7 +662,7 @@ mod tests {
 
     #[test]
     fn test_new_song_part() {
-        let part = SongPart::new(SongPartId::parse("verse.1").unwrap(), Some(1));
+        let part = SongPart::new(SongPartId::parse("verse.1").unwrap(), 1);
         assert_eq!(part.part_type, SongPartType::Verse);
         assert_eq!(part.number, 1);
     }
@@ -664,7 +670,7 @@ mod tests {
     #[test]
     fn test_adding_song_parts() {
         let mut song: Song = Song::new("Amazing Grace");
-        let part: SongPart = SongPart::new(SongPartId::parse("verse.1").unwrap(), None);
+        let part: SongPart = SongPart::new(SongPartId::parse("verse.1").unwrap(), 1);
         song.add_part(part);
         assert_eq!(song.parts.len(), 1);
         dbg!(song.parts);
