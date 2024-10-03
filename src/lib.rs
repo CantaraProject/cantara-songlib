@@ -26,6 +26,8 @@ pub mod importer;
 /// The filetypes which are supported as input/output
 pub mod filetypes;
 
+pub mod slides;
+
 
 #[cfg(test)]
 mod tests {
