@@ -131,6 +131,29 @@ pub struct SimplePictureSlide {
     picture_path: String,
 }
 
+
+/// Struct for specifing the settings when creating presentation slides
+pub struct SlideSettings {
+    title_slide: bool,
+    show_spoiler: bool,
+    show_meta_information: ShowMetaInformation,
+    meta_information_syntax: String,
+    empty_slide_at_the_ending: bool,
+}
+
+
+/// Enum for specifing the settings for the showing of meta information
+pub enum ShowMetaInformation {
+    /// Don't show any meta information in the presentation
+    None,
+    /// Show the meta information at the first slide of a song (apart from the title slide)
+    FirstSlide,
+    /// Show the meta information at the last slide of a song (apart from an empty slide)
+    LastSlide,
+    /// Show the meta information on both the first and the last slide of a song
+    FirstSlideAndLastSlide
+}
+
 #[cfg(test)]
 mod test {
     use super::*;
