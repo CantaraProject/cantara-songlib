@@ -1,0 +1,109 @@
+{
+  "title": "O What A Savior That He Died For Me",
+  "tags": {
+    "author": "James McGranahan"
+  },
+  "parts": [
+    {
+      "id": {
+        "id": "Verse.1",
+        "checked_unique": false
+      },
+      "part_type": "Verse",
+      "number": 1,
+      "contents": [
+        {
+          "voice_type": {
+            "Lyrics": {
+              "language": "Default"
+            }
+          },
+          "content": "Oh, what a Saviour that He died for me!\nFrom condemnation He hath made me free;\n\"He that believeth on the Son,\" said He,\n\"Hath everlasting life.\"\n"
+        }
+      ],
+      "is_repetition_of": null,
+      "occurs_after": null
+    },
+    {
+      "id": {
+        "id": "Verse.2",
+        "checked_unique": false
+      },
+      "part_type": "Chorus",
+      "number": 1,
+      "contents": [
+        {
+          "voice_type": {
+            "Lyrics": {
+              "language": "Default"
+            }
+          },
+          "content": "\"Verily, verily, I say unto you;\nVerily, verily,\" message ever new!\n\"He that believeth on the Son,\" 'tis true!\n\"Hath everlasting life!\"\n"
+        }
+      ],
+      "is_repetition_of": null,
+      "occurs_after": null
+    },
+    {
+      "id": {
+        "id": "Verse.3",
+        "checked_unique": false
+      },
+      "part_type": "Verse",
+      "number": 1,
+      "contents": [
+        {
+          "voice_type": {
+            "Lyrics": {
+              "language": "Default"
+            }
+          },
+          "content": "All my iniquities on Him were laid,\nAll my indebtedness by Him was paid;\nAll who believe on Him, the Lord hath said,\n\"Hath everlasting life.\"\n"
+        }
+      ],
+      "is_repetition_of": null,
+      "occurs_after": null
+    },
+    {
+      "id": {
+        "id": "Verse.3",
+        "checked_unique": false
+      },
+      "part_type": "Verse",
+      "number": 1,
+      "contents": [
+        {
+          "voice_type": {
+            "Lyrics": {
+              "language": "Default"
+            }
+          },
+          "content": "Though poor and needy, I can trust my Lord;\nThough weak and sinful, I believe His Word;\nO glad message! Ev'ry child of God\n\"Hath everlasting life.\"\n"
+        }
+      ],
+      "is_repetition_of": null,
+      "occurs_after": null
+    },
+    {
+      "id": {
+        "id": "Verse.4",
+        "checked_unique": false
+      },
+      "part_type": "Verse",
+      "number": 1,
+      "contents": [
+        {
+          "voice_type": {
+            "Lyrics": {
+              "language": "Default"
+            }
+          },
+          "content": "Though all unworthy, yet I will not doubt;\nFor him that cometh He will not cast out;\n\"He that believeth,\" oh, the good news shout!\n\"Hath everlasting life.\"\n"
+        }
+      ],
+      "is_repetition_of": null,
+      "occurs_after": null
+    }
+  ],
+  "part_order": []
+}

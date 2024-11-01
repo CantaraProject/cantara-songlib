@@ -48,3 +48,19 @@ impl std::error::Error for CantaraImportUnknownBlockError {
         "Unknown block"
     }
 }
+
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct CantaraFileDoesNotExistError;
+
+impl fmt::Display for CantaraFileDoesNotExistError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "There file does not exist")
+    }
+}
+
+impl std::error::Error for CantaraFileDoesNotExistError {
+    fn description(&self) -> &str {
+        "There file does not exist"
+    }
+}

@@ -2,6 +2,7 @@
 //! The Cantara song format is a simple text format that is used to write songs in plain text files.
 //! You can find a documentation here: <https://www.cantara.app/tutorial/where-to-get-the-songs/index.html#the-song-file-format>
 
+use std::collections::HashMap;
 use std::error::Error;
 use std::{cell::RefCell, rc::Rc};
 use std::sync::OnceLock;
@@ -18,6 +19,37 @@ use crate::song::{
     SongPartContentType, 
     SongPartType, 
 };
+
+use crate::slides::*;
+
+use super::SongFile;
+
+fn parse_metadata_block(block: &str) -> HashMap<String, String> {
+    let mut metadata: HashMap<String, String> = HashMap::new();
+
+    // With that we make sure that the regex is only compiled once.
+    let tags_regex = { 
+        static TAGS_REGEX: OnceLock<Regex> = OnceLock::new();
+        TAGS_REGEX.get_or_init(|| {
+            RegexBuilder::new(r"\s*#(\w+):\s*(.+)$")
+                .multi_line(true)
+                .build()
+                .unwrap()
+        })
+    };        
+
+    tags_regex
+        .captures_iter(block)
+        .for_each(|capture: regex::Captures| {
+            let tag: &str = capture.get(1).unwrap().as_str();
+            let value = capture.get(2).unwrap().as_str().to_string();
+            let tag_lowercase = tag.to_lowercase();
+            
+            metadata.insert(tag_lowercase, value);
+        });
+
+    metadata
+}
 
 fn parse_block(block: &str, song: Song) -> Result<Song, Box<dyn Error>> {
     if block.is_empty() {
@@ -144,6 +176,78 @@ pub fn import_song(content: &str) -> Result<Song, Box<dyn Error>> {
     Ok(song)
 }
 
+fn presentation_from_classic_song(
+        content: &str, 
+        presentation_settings: PresentationSettings) {
+    
+    // The emptyness of the line before (in the loop)
+    let mut empty_line = false;
+    let mut start_block_flag = true;
+    let mut meta_block_flag = false;
+    let mut blocks: Vec<Vec<String>> = vec![];
+    let mut cur_block_string: String = "".to_string();
+    let mut metadata: HashMap<String, String> = HashMap::new();
+
+    for line in content.trim().lines() {
+        if empty_line { start_block_flag = true };
+        
+        if start_block_flag {
+            meta_block_flag = match line.chars().next().unwrap() {
+                '#' => true,
+                _   => false,
+            };
+            start_block_flag = false;
+        }
+        
+        if line.trim().is_empty() {
+            empty_line = true;
+            
+            // Skip anything below if the line is empty as well
+            if cur_block_string.is_empty() {
+                continue;
+            }
+
+            match meta_block_flag {
+                true => { 
+                    parse_metadata_block(&cur_block_string)
+                    .iter()
+                    .for_each(|(key, value)| {
+                        metadata.insert(key.clone(), value.clone());
+                    }); 
+
+                },
+                false => { 
+                    if !cur_block_string.trim().is_empty() {
+                        blocks.push(
+                            cur_block_string.lines()
+                            .map(|str| str.to_string()).collect()
+                        );
+                    }
+                },
+            }
+            cur_block_string = "".to_string();
+        }
+        else {
+            cur_block_string.push_str("\n");
+            cur_block_string.push_str(line);
+        }
+    }
+
+    // TODO: Implement word wrap feature
+    
+
+    // Create the Presentation
+    let slides: Presentation = vec![];
+
+    if presentation_settings.show_title_slide {
+        // TODO: Implement the meta tag stuff...
+        //slides.push(
+        //    Slide::new_title_slide(title_text, meta_text)
+        //);
+    }
+
+}
+
 #[cfg(test)]
 mod test {
     use crate::importer::import_song_from_file;
@@ -202,6 +306,16 @@ mod test {
         assert_eq!(song.get_part_count(SongPartType::Verse), 4);
         assert_eq!(song.get_part_count(SongPartType::Chorus), 1);
         dbg!(song);
+    }
+
+    #[test]
+    fn test_metadata_parsing() {
+        let metadata_block: &str = "#title: Test \n\
+            author: J.S. Bach";
+        let metadata = parse_metadata_block(metadata_block);
+        assert_eq!(metadata.len(), 2);
+        assert_eq!(metadata.get("title").unwrap(), "Test");
+        assert_eq!(metadata.get("author").unwrap(), "J.S. Bach");
     }
 
 }

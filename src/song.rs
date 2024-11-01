@@ -1,7 +1,7 @@
 extern crate regex;
 use core::fmt;
 use regex::Regex;
-use std::{cell::RefCell, collections::HashMap, rc::Rc};
+use std::{cell::RefCell, collections::HashMap, rc::Rc, path::Path};
 
 extern crate serde;
 use serde::{Deserialize, Serialize};
@@ -613,6 +613,24 @@ impl PartOrder {
             PartOrderRule::Custom(song.parts.clone()),
         )
     }
+
+    pub fn to_parts(&self, song: &Song) -> Vec<Rc<RefCell<SongPart>>> {
+        match self.partorderrule.clone() {
+            PartOrderRule::Custom(parts) => parts.clone(),
+            PartOrderRule::VerseRefrainBridgeRefrain => {
+                let parts: Vec<Rc<RefCell<SongPart>>> = Vec::new();
+                let last_refrain: Option<SongPart> = None;
+                
+                for part in &song.parts {
+                    // TODO 
+                    // Implement parsing algorithm
+                }
+                parts
+                },
+                PartOrderRule::RefrainVerseBridgeRefrain => todo!(),
+            
+        }
+    } 
 }
 
 /// A rule which defines the order of the parts in a song

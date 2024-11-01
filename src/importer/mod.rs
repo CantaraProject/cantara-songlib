@@ -7,10 +7,59 @@ mod errors;
 /// This module contains functions for importing classic song files.
 mod classic_song;
 
+use errors::CantaraFileDoesNotExistError;
+use serde::{Deserialize, Serialize};
+
 use crate::song::Song;
 use std::error::Error;
 use std::ffi::OsStr;
-use std::path::Path;
+use std::path::{Path, PathBuf};
+
+
+#[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
+/// This struct represents a song file of any type located sommewhere on the file system. It can then later be parsed and hold a parsed Song type or used to create a presentation directly.
+pub struct SongFile {
+    /// The parsed file_path of the song
+    pub file_path: PathBuf,
+
+    /// The parsing state
+    pub parsing_state: SongFileParsingState,
+}
+
+impl SongFile {
+    pub fn new(path: &str) -> Result<Self, CantaraFileDoesNotExistError> {
+        match Path::new(&path).exists() {
+            true => {
+                let file_path = Path::new(path).to_path_buf();
+                let parsing_state = SongFileParsingState::NotStarted;
+
+                Ok(
+                    SongFile {
+                        file_path,
+                        parsing_state
+                    }
+                )
+            },
+            false => {
+                Err(
+                    CantaraFileDoesNotExistError
+                )
+            }            
+        }
+  
+    }
+}
+
+
+/// Represents the parsing state of a song file
+#[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
+pub enum SongFileParsingState {
+    /// The file is known, but 
+    NotStarted,
+    FormatDetermined,
+    ClassicSongNotParsed,
+    ParsedCantaraSong(Song),
+}
 
 /// Imports a song from a file.
 /// The function reads the content of the file and determines the file format by its extension.
@@ -108,5 +157,11 @@ mod test {
         assert!(result.is_err());
         let error: Box<dyn Error> = result.err().unwrap();
         assert_eq!(error.to_string(), "Unknown file extension: txt");
+    }
+
+    #[test]
+    fn test_create_songfile_which_does_not_exist() {
+        let result = SongFile::new("testfiles/A Non Existing File.txt");
+        assert_eq!(result.unwrap_err(), CantaraFileDoesNotExistError);
     }
 }

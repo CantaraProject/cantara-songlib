@@ -2,12 +2,11 @@
 
 use serde::{Serialize, Deserialize};
 
+use crate::importer::SongFile;
+
 
 /// A Presentation which can be displayed
-#[derive(Clone, Serialize, Deserialize, PartialEq, Debug)]
-pub struct Presentation {
-    slides: Vec<String>
-}
+pub type Presentation = Vec<Slide>;
 
 /// The enum which contains all possible contents of a slide
 #[derive(Clone, Serialize, Deserialize, PartialEq, Debug)]
@@ -19,11 +18,12 @@ pub enum SlideContent {
     Empty(EmptySlide),
 }
 
+
 /// This represents a slide which is presented
 #[derive(Clone, Serialize, Deserialize, PartialEq, Debug)]
 pub struct Slide {
     pub slide_content: SlideContent,
-    pub linked_file: Option<String>
+    pub linked_file: Option<SongFile>
 }
 
 impl Slide {
@@ -37,6 +37,7 @@ impl Slide {
             linked_file: None,
         }
     }
+
     pub fn new_content_slide(main_text: String, spoiler_text: Option<String>, meta_text: Option<String>) -> Self {
         Slide {
             slide_content: SlideContent::SingleLanguageMainContent(
@@ -48,6 +49,25 @@ impl Slide {
             ),
             linked_file: None,
         }
+    }
+
+    pub fn new_title_slide(title_text: String, meta_text: Option<String>) -> Self {
+        Slide {
+            slide_content: SlideContent::Title(
+                TitleSlide {
+                    title_text,
+                    meta_text
+                }
+            ),
+            linked_file: None,
+        }
+    }
+
+    pub fn with_song_file(self, linked_file: SongFile) -> Self {
+        let mut cloned_self = self.clone();
+        cloned_self.linked_file = Some(linked_file);
+
+        cloned_self
     }
 
     pub fn has_spoiler(&self) -> bool {
@@ -129,6 +149,30 @@ pub struct TitleSlide {
 #[derive(Clone, Serialize, Deserialize, PartialEq, Debug)]
 pub struct SimplePictureSlide {
     picture_path: String,
+}
+
+/// A generic enum which can be used to define Presentation Settings for the **generation**
+/// This concerns the content/structure of the presentation, not(!) the design
+pub struct PresentationSettings {
+    pub show_title_slide: bool,
+    pub meta_syntax: String,
+    pub meta_syntax_on_first_slide: bool,
+    pub meta_syntax_on_last_slide: bool,
+    pub empty_last_slide: bool,
+    pub spoiler: bool
+}
+
+impl PresentationSettings {
+    pub fn default() -> Self {
+        PresentationSettings { 
+            show_title_slide: true, 
+            meta_syntax: "".to_string(),
+            meta_syntax_on_first_slide: true, 
+            meta_syntax_on_last_slide: true, 
+            empty_last_slide: true, 
+            spoiler: true 
+        }
+    }
 }
 
 #[cfg(test)]
