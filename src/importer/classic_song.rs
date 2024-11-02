@@ -31,7 +31,7 @@ fn parse_metadata_block(block: &str) -> HashMap<String, String> {
     let tags_regex = { 
         static TAGS_REGEX: OnceLock<Regex> = OnceLock::new();
         TAGS_REGEX.get_or_init(|| {
-            RegexBuilder::new(r"\s*#(\w+):\s*(.+)$")
+            RegexBuilder::new(r"^\s*#(\w+):\s*(.+)$")
                 .multi_line(true)
                 .build()
                 .unwrap()
@@ -41,8 +41,8 @@ fn parse_metadata_block(block: &str) -> HashMap<String, String> {
     tags_regex
         .captures_iter(block)
         .for_each(|capture: regex::Captures| {
-            let tag: &str = capture.get(1).unwrap().as_str();
-            let value = capture.get(2).unwrap().as_str().to_string();
+            let tag: &str = capture.get(1).unwrap().as_str().trim();
+            let value = capture.get(2).unwrap().as_str().trim().to_string();
             let tag_lowercase = tag.to_lowercase();
             
             metadata.insert(tag_lowercase, value);
@@ -311,8 +311,9 @@ mod test {
     #[test]
     fn test_metadata_parsing() {
         let metadata_block: &str = "#title: Test \n\
-            author: J.S. Bach";
+            #author: J.S. Bach";
         let metadata = parse_metadata_block(metadata_block);
+        
         assert_eq!(metadata.len(), 2);
         assert_eq!(metadata.get("title").unwrap(), "Test");
         assert_eq!(metadata.get("author").unwrap(), "J.S. Bach");
