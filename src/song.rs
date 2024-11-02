@@ -5,6 +5,7 @@ use std::{cell::RefCell, collections::HashMap, rc::Rc, path::Path};
 
 extern crate serde;
 use serde::{Deserialize, Serialize};
+use crate::song::SongPartType::Chorus;
 
 /// Object which represents a song in Cantara
 #[derive(Clone, Serialize, Deserialize, PartialEq, Debug)]
@@ -209,6 +210,11 @@ impl Song {
         }
     }
 
+    /// Gets a vector of all parts of a specific SongPartType
+    /// # Arguments
+    /// * `part_type`: A SongPartType
+    /// Returns
+    /// A vector of all SongParts with the SongPartType given.
     pub fn get_parts_by_type(&self, part_type: SongPartType) -> Vec<Rc<RefCell<SongPart>>> {
         let mut parts: Vec<Rc<RefCell<SongPart>>> = Vec::new();
         for part_refcall in &self.parts {
@@ -614,21 +620,62 @@ impl PartOrder {
         )
     }
 
+    /// This function applies an algorithm which creates a song structure as normally it is sang.
+    fn apply_versechorusbridgechorus_algorithm(&self, song: &Song) -> Vec<Rc<RefCell<SongPart>>> {
+        let mut parts: Vec<Rc<RefCell<SongPart>>> = Vec::new();
+        let stanza_parts: Vec<Rc<RefCell<SongPart>>> = song.get_parts_by_type(SongPartType::Verse);
+        let chorus_parts: Vec<Rc<RefCell<SongPart>>> = song.get_parts_by_type(SongPartType::Chorus);
+
+        if chorus_parts.len() == 0 {
+            return stanza_parts;
+        }
+
+        let mut current_choruses: Vec<Rc<RefCell<SongPart>>> = Vec::new();
+
+        for (part_refcell) in song.parts.clone() {
+            let part = part_refcell.borrow().clone();
+            if part.part_type == SongPartType::Verse {
+                parts.push(Rc::new(RefCell::new(part)));
+                parts.append(&mut current_choruses.clone());
+            } else if part.part_type == SongPartType::Chorus {
+                if current_choruses.len() > 1 && current_choruses.first().unwrap().borrow().get_type() == SongPartType::PreChorus {
+                    // Remove only Chorus not PreChorus
+                    let first_element = current_choruses.first().unwrap().borrow().clone();
+                    current_choruses.clear();
+                    current_choruses.push(Rc::new(RefCell::new(first_element.clone())));
+                } else {
+                    current_choruses.clear();
+                }
+
+                current_choruses.push(Rc::new(RefCell::new(part)));
+                parts.append(&mut current_choruses.clone());
+            }
+            else if part.part_type == SongPartType::PreChorus {
+                current_choruses.push(Rc::new(RefCell::new(part)));
+                parts.append(&mut current_choruses.clone());
+            }
+            else if part.part_type == SongPartType::Bridge {
+                current_choruses.push(Rc::new(RefCell::new(part)));
+                parts.append(&mut current_choruses.clone());
+            }
+        }
+        parts
+    }
+
     pub fn to_parts(&self, song: &Song) -> Vec<Rc<RefCell<SongPart>>> {
         match self.partorderrule.clone() {
             PartOrderRule::Custom(parts) => parts.clone(),
-            PartOrderRule::VerseRefrainBridgeRefrain => {
-                let parts: Vec<Rc<RefCell<SongPart>>> = Vec::new();
-                let last_refrain: Option<SongPart> = None;
-                
-                for part in &song.parts {
-                    // TODO 
-                    // Implement parsing algorithm
+            PartOrderRule::VerseRefrainBridgeRefrain => { self.apply_versechorusbridgechorus_algorithm(song) },
+            PartOrderRule::RefrainVerseBridgeRefrain => {
+                match song.get_parts_by_type(SongPartType::Refrain).first() {
+                    None => self.apply_versechorusbridgechorus_algorithm(song),
+                    Some(first_part) => {
+                        let mut parts = vec![first_part.clone()];
+                        parts.append(&mut self.apply_versechorusbridgechorus_algorithm(song));
+                        parts
+                    }
                 }
-                parts
-                },
-                PartOrderRule::RefrainVerseBridgeRefrain => todo!(),
-            
+            }
         }
     } 
 }
@@ -693,4 +740,16 @@ mod tests {
         assert_eq!(song.parts.len(), 1);
         dbg!(song.parts);
     }
+
+    #[test]
+    fn test_add_content_with_multiple_parts() {
+        let mut song: Song = Song::new("Amazing Grace");
+        let part: SongPart = SongPart::new(SongPartId::parse("verse.1").unwrap(), 1);
+        song.add_part(part);
+        let part: SongPart = SongPart::new(SongPartId::parse("verse.2").unwrap(), 2);
+        song.add_part(part);
+        assert_eq!(song.parts.len(), 2);
+    }
+    
+    
 }
