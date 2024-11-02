@@ -13,7 +13,7 @@ pub struct Song {
     pub title: String,
     tags: HashMap<String, String>,
     parts: Vec<Rc<RefCell<SongPart>>>,
-    part_order: Vec<PartOrderRule>,
+    pub part_orders: Vec<PartOrder>,
 }
 
 impl Song {
@@ -23,7 +23,7 @@ impl Song {
             title: title.to_string(),
             tags: HashMap::new(),
             parts: Vec::new(),
-            part_order: Vec::new(),
+            part_orders: Vec::new(),
         }
     }
 
@@ -202,7 +202,7 @@ impl Song {
     /// # Returns
     /// An Option with the reference to the song part with the given index (or None if no song part was found)
     pub fn get_part_by_index(&self, index: usize) -> Option<Rc<RefCell<SongPart>>> {
-        if self.parts.len() >= index {
+        if index >= self.parts.len() {
             None
         } else {
             let cloned_part_refcall = &self.parts.get(index).unwrap().clone();
@@ -263,6 +263,29 @@ impl Song {
     /// The number of parts in the song
     pub fn get_total_part_count(&self) -> usize {
         self.parts.len()
+    }
+    
+    
+    /// Add a part order which is guessed based of the song parts
+    /// 
+    /// # Example
+    /// ```
+    /// use cantara_songlib::song::{Song, SongPart, SongPartId};
+    ///
+    /// let mut song = Song::new("And can it be");
+    ///
+    /// let part = SongPart::new(SongPartId::parse("verse.1").unwrap(), 1);
+    /// song.add_part(part);
+    /// let part = SongPart::new(SongPartId::parse("refrain.1").unwrap(), 1);
+    ///  song.add_part(part);
+    /// song.add_guessed_part_order();
+    /// 
+    /// assert!(song.part_orders.len() == 1);
+    /// ```
+    pub fn add_guessed_part_order(&mut self) {
+        self.part_orders.push(
+            PartOrder::from_guess(self)
+        );
     }
 }
 
@@ -750,6 +773,5 @@ mod tests {
         song.add_part(part);
         assert_eq!(song.parts.len(), 2);
     }
-    
     
 }
