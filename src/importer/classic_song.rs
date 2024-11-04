@@ -178,43 +178,59 @@ pub fn import_song(content: &str) -> Result<Song, Box<dyn Error>> {
 
 fn presentation_from_classic_song(
         content: &str, 
-        presentation_settings: PresentationSettings) {
+        presentation_settings: PresentationSettings,
+        force_title: Option<String>) -> Presentation {
+    
+    /// Defines the current parsing state (which area is to be parsed)
+    enum WritingArea {
+        // The main block
+        MainBlock,
+        // The SecondarybBlock
+        SecondaryBlock
+    }
     
     // The emptyness of the line before (in the loop)
     let mut empty_line = false;
+    // A new block has been started (in the iteration before)
     let mut start_block_flag = true;
+    // The current block is a meta block
     let mut meta_block_flag = false;
+    // All (main) blocks
     let mut blocks: Vec<Vec<String>> = vec![];
+    // All secondary blocks. There will be always as many secondary blocks as there are primary blocks. 
+    // Empty String equals None
+    let mut secondary_blocks: Vec<Vec<String>> = vec![];
+    
+    // The current string of the block (used in the algorithm below)
     let mut cur_block_string: String = "".to_string();
+    // The current string of the second block (used in the algorithm below)
+    let mut cur_secundary_block_string: String = "".to_string();
+    
+    // The metadata of the song
     let mut metadata: HashMap<String, String> = HashMap::new();
-
-    for line in content.trim().lines() {
-        if empty_line { start_block_flag = true };
-        
-        if start_block_flag {
-            meta_block_flag = match line.chars().next().unwrap() {
-                '#' => true,
-                _   => false,
-            };
-            start_block_flag = false;
-        }
-        
-        if line.trim().is_empty() {
-            empty_line = true;
-            
-            // Skip anything below if the line is empty as well
-            if cur_block_string.is_empty() {
-                continue;
-            }
-
-            match meta_block_flag {
+    // Which block is currently written to (Main Block/Secondary Block)
+    let mut writing_area: WritingArea = WritingArea::MainBlock;
+    
+    // A sub function for handling a block (putting it at the right position)
+    // As this code is used twice in the code, it is outsourced into this function
+    fn handle_block(metadata: &mut HashMap<String, String>, 
+        meta_block_flag: &bool, 
+        force_title: &Option<String>,
+        cur_block_string: &String, 
+        cur_secundary_block_string: &String, 
+        blocks: &mut Vec<Vec<String>>, 
+        secondary_blocks: &mut Vec<Vec<String>>
+        ) {
+        match meta_block_flag {
                 true => { 
                     parse_metadata_block(&cur_block_string)
                     .iter()
                     .for_each(|(key, value)| {
                         metadata.insert(key.clone(), value.clone());
                     }); 
-
+                    if force_title.is_some() {
+                        metadata.insert("title".to_string(), force_title.clone().unwrap());
+                    }
                 },
                 false => { 
                     if !cur_block_string.trim().is_empty() {
@@ -222,29 +238,122 @@ fn presentation_from_classic_song(
                             cur_block_string.lines()
                             .map(|str| str.to_string()).collect()
                         );
+                        secondary_blocks.push(
+                            cur_secundary_block_string.lines()
+                            .map(|str| str.to_string()).collect()
+                        );
                     }
                 },
             }
+    }
+                
+    for line in content.trim().lines() {
+        if empty_line { start_block_flag = true };
+        
+        if start_block_flag {
+            if !line.is_empty() {
+                meta_block_flag = match line.chars().next().unwrap() {
+                    '#' => true,
+                    _   => false,
+                };
+                start_block_flag = false;
+            }
+        }
+        
+        if line.trim().is_empty() {
+            empty_line = true;
+            writing_area = WritingArea::MainBlock;
+            
+            // Skip anything below if the line is empty as well
+            if cur_block_string.is_empty() {
+                continue;
+            }
+
+            handle_block(&mut metadata, 
+                &meta_block_flag, 
+                &force_title, 
+                &cur_block_string, 
+                &cur_secundary_block_string, 
+                &mut blocks, 
+                &mut secondary_blocks
+            );
+            
             cur_block_string = "".to_string();
+            cur_secundary_block_string = "".to_string();
+            
+        }
+        // The --- delimiter starts a secondary block in a stanza
+        else if line.trim() == "---" {
+            writing_area = WritingArea::SecondaryBlock;
         }
         else {
-            cur_block_string.push_str("\n");
-            cur_block_string.push_str(line);
+            match writing_area {
+                WritingArea::MainBlock => {
+                    cur_block_string.push_str("\n");
+                    cur_block_string.push_str(line);
+                },
+                WritingArea::SecondaryBlock => {
+                    cur_secundary_block_string.push_str("\n");
+                    cur_secundary_block_string.push_str(line);
+                }
+            }
+            
         }
     }
-
+    handle_block(&mut metadata, 
+        &meta_block_flag, 
+        &force_title, 
+        &cur_block_string, 
+        &cur_secundary_block_string, 
+        &mut blocks, 
+        &mut secondary_blocks
+    );
     // TODO: Implement word wrap feature
     
 
     // Create the Presentation
-    let slides: Presentation = vec![];
+    let mut slides: Presentation = vec![];
 
     if presentation_settings.show_title_slide {
-        // TODO: Implement the meta tag stuff...
-        //slides.push(
-        //    Slide::new_title_slide(title_text, meta_text)
-        //);
+        slides.push(
+            Slide::new_title_slide(metadata.get("title").unwrap().into(),                                          Some("Meta text not implemented yet".to_string())
+                )
+        )
     }
+    
+    for (index, block) in blocks.iter().enumerate() {
+        let secondary_block = secondary_blocks.get(index).unwrap();
+        
+        if secondary_block.is_empty() {
+            match blocks.get(index+1) {
+                Some(next_block) => {
+                    slides.push(
+                        Slide::new_content_slide(block.join("\n"), Some(next_block.join("\n")), Some("Not implemented yet".to_string()))
+                    )       
+                },
+                None => {
+                    slides.push(
+                        Slide::new_content_slide(block.join("\n"), None, Some("Not implemented yet".to_string()))
+                    )
+                }
+            }
+        } else {
+            slides.push(
+                Slide::new_content_slide(block.join("\n"),
+                    Some(secondary_block.join("\n")), 
+                    Some("Not implemented yet".to_string())
+                )
+            );
+        }
+    }
+    
+    if presentation_settings.empty_last_slide {
+        slides.push(
+            Slide::new_empty_slide(false)    
+        );
+    }
+    
+    slides
 
 }
 
@@ -317,6 +426,30 @@ mod test {
         assert_eq!(metadata.len(), 2);
         assert_eq!(metadata.get("title").unwrap(), "Test");
         assert_eq!(metadata.get("author").unwrap(), "J.S. Bach");
+    }
+    
+    #[test]
+    fn generate_slides() {
+        let testfile = std::fs::read_to_string("testfiles/O What A Savior That He Died For Me.song").unwrap();
+        
+        let presentation_settings   = PresentationSettings { 
+            show_title_slide: true, 
+            meta_syntax: "".to_string(), 
+            meta_syntax_on_first_slide: true, 
+            meta_syntax_on_last_slide: true, 
+            empty_last_slide: true, 
+            spoiler: true 
+        };
+        
+        let slides: Presentation = presentation_from_classic_song(
+            &testfile, 
+            presentation_settings,
+            Some("Verily, Verily".to_string())
+        );
+        
+        assert!(slides.len() > 0);
+        
+        dbg!(slides);
     }
 
 }
