@@ -28,6 +28,7 @@ pub mod filetypes;
 
 pub mod slides;
 
+pub mod templating;
 
 #[cfg(test)]
 mod tests {
