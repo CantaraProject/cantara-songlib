@@ -21,6 +21,7 @@ use crate::song::{
 };
 
 use crate::slides::*;
+use crate::templating::render_metadata;
 
 use super::SongFile;
 
@@ -176,10 +177,19 @@ pub fn import_song(content: &str) -> Result<Song, Box<dyn Error>> {
     Ok(song)
 }
 
-fn presentation_from_classic_song(
+/// Generates slides from a classic song content which is provided as &str
+/// 
+/// # Arguments
+/// - `content`: The content of the classic song file given as a &str
+/// - `presentation_settings`: A PresentationSettings struct which provides all settings for the creation of presentation slides
+/// - `backup_title`: The title (String) which will be used if no #title - tag is specified in the content. This is most likely coming from the filename.
+/// 
+/// # Returns
+/// A Vec<Slide> with the slides. This can be integrated into a PresentationChapter and a Presentation.
+fn slides_from_classic_song(
         content: &str, 
-        presentation_settings: PresentationSettings,
-        force_title: Option<String>) -> Presentation {
+        presentation_settings: &PresentationSettings,
+        backup_title: String) -> Vec<Slide> {
     
     /// Defines the current parsing state (which area is to be parsed)
     enum WritingArea {
@@ -215,7 +225,7 @@ fn presentation_from_classic_song(
     // As this code is used twice in the code, it is outsourced into this function
     fn handle_block(metadata: &mut HashMap<String, String>, 
         meta_block_flag: &bool, 
-        force_title: &Option<String>,
+        backup_title: &String,
         cur_block_string: &String, 
         cur_secundary_block_string: &String, 
         blocks: &mut Vec<Vec<String>>, 
@@ -228,8 +238,8 @@ fn presentation_from_classic_song(
                     .for_each(|(key, value)| {
                         metadata.insert(key.clone(), value.clone());
                     }); 
-                    if force_title.is_some() {
-                        metadata.insert("title".to_string(), force_title.clone().unwrap());
+                    if metadata.get("title").is_none() {
+                        metadata.insert("title".to_string(), backup_title.clone());
                     }
                 },
                 false => { 
@@ -271,7 +281,7 @@ fn presentation_from_classic_song(
 
             handle_block(&mut metadata, 
                 &meta_block_flag, 
-                &force_title, 
+                &backup_title, 
                 &cur_block_string, 
                 &cur_secundary_block_string, 
                 &mut blocks, 
@@ -302,7 +312,7 @@ fn presentation_from_classic_song(
     }
     handle_block(&mut metadata, 
         &meta_block_flag, 
-        &force_title, 
+        &backup_title, 
         &cur_block_string, 
         &cur_secundary_block_string, 
         &mut blocks, 
@@ -312,28 +322,60 @@ fn presentation_from_classic_song(
     
 
     // Create the Presentation
-    let mut slides: Presentation = vec![];
+    
+    let mut slides: Vec<Slide> = vec![];
+
+    let meta_text_rendering_result = render_metadata(
+        &presentation_settings.meta_syntax, 
+        &metadata
+    );
+    let mut meta_text: String = "".to_string();
+
+    let meta_text_showable: bool = match meta_text_rendering_result {
+        Ok(str) => {
+            meta_text = str.clone();
+            !str.is_empty()
+        },
+        Err(_) => false,
+    };
+
+
 
     if presentation_settings.show_title_slide {
+        let displayed_meta_text = match meta_text_showable {
+            true => Some(meta_text.clone()),
+            false => None,
+        };
+        
         slides.push(
-            Slide::new_title_slide(metadata.get("title").unwrap().into(),                                          Some("Meta text not implemented yet".to_string())
-                )
+            Slide::new_title_slide(
+                metadata.get("title").unwrap().into(),                                          
+                displayed_meta_text
+            )
         )
     }
     
+    let count = blocks.len();
     for (index, block) in blocks.iter().enumerate() {
-        let secondary_block = secondary_blocks.get(index).unwrap();
+        let displayed_meta_text = match meta_text_showable && (presentation_settings.meta_syntax_on_first_slide && index == 1) || (presentation_settings.meta_syntax_on_last_slide && index == count -1) {
+            true => Some(meta_text.clone()),
+            false => None,
+        };
         
+        let secondary_block = secondary_blocks.get(index).unwrap();
         if secondary_block.is_empty() {
             match blocks.get(index+1) {
                 Some(next_block) => {
                     slides.push(
-                        Slide::new_content_slide(block.join("\n"), Some(next_block.join("\n")), Some("Not implemented yet".to_string()))
+                        Slide::new_content_slide(block.join("\n"), Some(next_block.join("\n")), displayed_meta_text)
                     )       
                 },
                 None => {
                     slides.push(
-                        Slide::new_content_slide(block.join("\n"), None, Some("Not implemented yet".to_string()))
+                        Slide::new_content_slide(
+                            block.join("\n"), None, 
+                            displayed_meta_text
+                        )
                     )
                 }
             }
@@ -341,7 +383,7 @@ fn presentation_from_classic_song(
             slides.push(
                 Slide::new_content_slide(block.join("\n"),
                     Some(secondary_block.join("\n")), 
-                    Some("Not implemented yet".to_string())
+                    displayed_meta_text
                 )
             );
         }
@@ -434,22 +476,54 @@ mod test {
         
         let presentation_settings   = PresentationSettings { 
             show_title_slide: true, 
-            meta_syntax: "".to_string(), 
+            meta_syntax: "{{title}} ({{author}})".to_string(), 
             meta_syntax_on_first_slide: true, 
             meta_syntax_on_last_slide: true, 
             empty_last_slide: true, 
             spoiler: true 
         };
         
-        let slides: Presentation = presentation_from_classic_song(
+        let slides: Vec<Slide> = slides_from_classic_song(
             &testfile, 
-            presentation_settings,
-            Some("Verily, Verily".to_string())
+            &presentation_settings,
+            "Verily, Verily".to_string()
         );
         
         assert!(slides.len() > 0);
         
         dbg!(slides);
+    }
+
+    #[test]
+    fn test_metadata_displayed_correctly() {
+        let testfile = std::fs::read_to_string("testfiles/O What A Savior That He Died For Me.song").unwrap();
+        
+        let mut presentation_settings   = PresentationSettings { 
+            show_title_slide: false, 
+            meta_syntax: "{{title}} ({{author}})".to_string(), 
+            meta_syntax_on_first_slide: false, 
+            meta_syntax_on_last_slide: false, 
+            empty_last_slide: true, 
+            spoiler: true 
+        };
+
+        let slides: Vec<Slide> = slides_from_classic_song(
+            &testfile, 
+            &presentation_settings,
+            "Verily, Verily".to_string()
+        );
+
+        slides.iter().for_each(|slide| assert!(!slide.has_meta_text()));
+
+        presentation_settings.meta_syntax_on_first_slide = true;
+        
+        let slides: Vec<Slide> = slides_from_classic_song(
+            &testfile, 
+            &presentation_settings,
+            "Verily, Verily".to_string()
+        );
+
+        assert!(slides.get(1).unwrap().has_meta_text());
     }
 
 }
