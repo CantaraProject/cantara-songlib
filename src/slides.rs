@@ -1,12 +1,39 @@
-//! Here the logic for the slides is implemented
+//! In this module, the logic for presenting slides is implemented. In Cantara, a presentation is logically organized of several `PresentationChapter`s which are linked to a source where they are generated from (`linked_entity field`). A presentation chapter consists of `slides` of type `Vec<Type>`.
+//! Presentation Slides describe the logic which ought to be displayed (the fields and the structure). This can be rendered by the frontend or an exporter.
+//! SlideSettings are used to influence how slides are **generated**.
 
 use serde::{Serialize, Deserialize};
 
-use crate::importer::SongFile;
+use crate::{importer::SongFile, song::Song};
 
 
-/// A Presentation which can be displayed
-pub type Presentation = Vec<Slide>;
+/// A Presentation Chapter (mostly representing a song) which should be displayed
+#[derive(Clone, Serialize, Deserialize, PartialEq, Debug)]
+pub struct PresentationChapter {
+    /// The slides
+    pub slides: Vec<Slide>,
+    /// The linked entity -> most likely the song which was the source where the Presentation came from. Other entities might be imported later.
+    pub linked_entity: LinkedEntity,
+}
+
+impl PresentationChapter {
+    pub fn new(slides: Vec<Slide>, linked_entity: LinkedEntity) -> Self {
+        PresentationChapter { 
+            slides, 
+            linked_entity
+        }
+    }
+}
+
+/// Any source where slides can come from (now just a song, other sources might follow later)
+#[derive(Clone, Serialize, Deserialize, PartialEq, Debug)]
+pub enum LinkedEntity {
+    /// A song as source for the presentation (the song has to be given as an argument)
+    Song(Song),
+    /// Just a Title which is given (e.g. if the presentation has been imported directly)
+    Title(String),
+    SongFile(SongFile),
+}
 
 /// The enum which contains all possible contents of a slide
 #[derive(Clone, Serialize, Deserialize, PartialEq, Debug)]
@@ -75,6 +102,16 @@ impl Slide {
             SlideContent::SingleLanguageMainContent(single_language_main_content_slide) => single_language_main_content_slide.spoiler_text.is_some(),
             SlideContent::Title(_) => false,
             SlideContent::MultiLanguageMainContent(multi_language_main_content_slide) => multi_language_main_content_slide.spoiler_text_vector.len() > 0,
+            SlideContent::SimplePicture(_) => false,
+            SlideContent::Empty(_) => false,
+        }
+    }
+
+    pub fn has_meta_text(&self) -> bool {
+        match &self.slide_content {
+            SlideContent::SingleLanguageMainContent(single_language_main_content_slide) => single_language_main_content_slide.meta_text.is_some(),
+            SlideContent::Title(title_slide) => title_slide.meta_text.is_some(),
+            SlideContent::MultiLanguageMainContent(multi_language_main_content_slide) => multi_language_main_content_slide.meta_text.is_some(),
             SlideContent::SimplePicture(_) => false,
             SlideContent::Empty(_) => false,
         }
