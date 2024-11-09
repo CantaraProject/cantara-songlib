@@ -4,7 +4,7 @@ use std::cmp::{min};
 use serde::{Serialize, Deserialize};
 
 use crate::importer::SongFile;
-
+use crate::song::Song;
 
 // A Presentation Chapter (mostly representing a song) which should be displayed
 #[derive(Clone, Serialize, Deserialize, PartialEq, Debug)]
@@ -241,10 +241,12 @@ impl PresentationSettings {
 ///
 /// # Arguments
 /// - `blocks`: A &mut Vec<Vec<Vec<String>>> with all the blocks which should be wrapped
+/// - `maximum_lines`: The number of maximum lines which a block may have
+/// - `persistence`: Whether block brakes are to be preserved (recommended is true)
 /// Panics if secondary_block is Some(s) but s.len() != primary_block.len()
 /// # Returns
 /// The modified blocks as Vec<Vec<Vec<String>>>
-pub fn wrap_blocks(blocks: &Vec<Vec<Vec<String>>>, maximum_lines: usize) -> Vec<Vec<Vec<String>>>{
+pub fn wrap_blocks(blocks: &Vec<Vec<Vec<String>>>, maximum_lines: usize, persistence: bool) -> Vec<Vec<Vec<String>>>{
     if blocks.len() == 0 {
         return blocks.clone();
     }
@@ -263,25 +265,28 @@ pub fn wrap_blocks(blocks: &Vec<Vec<Vec<String>>>, maximum_lines: usize) -> Vec<
     let mut block_index: usize = 0;
     while block_index < wrapped_blocks[0].len() {
         if wrapped_blocks[0][block_index].len() > maximum_lines {
-            let splitter = min(maximum_lines, wrapped_blocks[0][block_index].len()/2);
-            let mut line_index = splitter;
+            let splitter = min(maximum_lines-1, wrapped_blocks[0][block_index].len()/2);
+            let line_index = splitter;
+
+            if wrapped_blocks[0].get(block_index +1).is_none() || persistence {
+                wrapped_blocks
+                    .iter_mut()
+                    .for_each(|block| {block.insert(block_index+1, vec![])})
+            }
+            
+            let mut moved_line_count = 0;
             while line_index < wrapped_blocks[0][block_index].len() {
                 let primary_line = wrapped_blocks[0][block_index].remove(line_index);
-                if wrapped_blocks[0].get(block_index +1).is_none() {
-                    wrapped_blocks
-                        .iter_mut()
-                        .for_each(|mut block| {block.push(vec![])})
-                }
-                wrapped_blocks[0][block_index+1].insert(line_index-splitter, primary_line);
+                wrapped_blocks[0][block_index+1].insert(moved_line_count, primary_line);
 
                 // Here the other blocks will be moved as well if they are available
                 for block in wrapped_blocks.iter_mut().skip(1) {
                     if line_index < block[block_index].len() {
                         let primary_line = block[block_index].remove(line_index);
-                        block[block_index+1].insert(line_index-splitter, primary_line);
+                        block[block_index+1].insert(moved_line_count, primary_line);
                     }
                 }
-
+                moved_line_count += 1;
             }
         }
         block_index += 1;
@@ -312,16 +317,16 @@ mod tests {
     fn test_wrap_blocks_function() {
         let example_blocks = vec![
             vec![
-                vec!["Test".to_string(), "Hallo".to_string(), "Hallo".to_string(), "Hallo".to_string()],
-                vec!["Test".to_string(), "Hallo".to_string(), "Hallo".to_string(), "Hallo".to_string(), "Welt".to_string()],
+                vec!["A1".to_string(), "A2".to_string(), "A3".to_string(), "A4".to_string(), "A5".to_string()],
+                vec!["A6".to_string(), "A7".to_string(), "A8".to_string(), "A9".to_string(), "A10".to_string()],
             ],
             vec![
-                vec!["Test".to_string(), "Hallo".to_string(), "Hallo".to_string(), "Hallo".to_string()],
-                vec!["Test".to_string(), "Hallo".to_string(), "Hallo".to_string(), "Hallo".to_string(), "Welt".to_string()],
+                vec!["B1".to_string(), "B2".to_string(), "B3".to_string(), "B4".to_string()],
+                vec!["B5".to_string(), "B6".to_string(), "B7".to_string(), "B8".to_string(), "B9".to_string()],
             ],
         ];
 
-        let wrapped_blocks = wrap_blocks(&example_blocks, 3);
+        let wrapped_blocks = wrap_blocks(&example_blocks, 3, true);
         dbg!(&wrapped_blocks);
     }
 }
