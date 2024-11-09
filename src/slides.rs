@@ -1,7 +1,6 @@
 //! Here the logic for the slides is implemented
 
 use std::cmp::{max, min};
-use std::slice::range;
 use serde::{Serialize, Deserialize};
 
 use crate::importer::SongFile;
@@ -202,49 +201,56 @@ impl PresentationSettings {
 
 /// This function wraps the blocks, so that the number of lines never exeeds maximum_lines.
 /// The second block is optional and will be wrapped accordingly to the first one.
-/// **Warning: This function will panic, if the length of a given `secondary_block` is not equal to the length of the primary block**
+/// **Warning: This function will panic, if the length of a given secondary blocks are not equal to the length of the primary block**
 ///
 /// # Arguments
-/// - `primary_blocks`: A &mut <Vec<Vec<String>> with the primary block which should be wrapped
-/// - `secondary_blocks': An Option<&mut Vec<Vec<String>>> with the secondary block which should be wrapped.
+/// - `blocks`: A &mut Vec<Vec<Vec<String>>> with all the blocks which should be wrapped
 /// Panics if secondary_block is Some(s) but s.len() != primary_block.len()
-/// - `maximum_lines`: The number of maximum lines which should be in a block.
 /// # Returns
-/// Nothing, the changes will be written to `primary_block` and `secondary_block`.
-pub fn wrap_blocks(primary_blocks: &mut Vec<Vec<String>>, secondary_blocks_option: Option<&mut Vec<Vec<String>>>, maximum_lines: usize) {
-    match secondary_blocks_option {
-        Some(secondary_blocks) => {
-            if secondary_blocks.len() != primary_blocks.len() {
-                panic!("Block length mismatch. Please read the documentation of wrap_blocks!");
-            }
+/// The modified blocks as Vec<Vec<Vec<String>>>
+pub fn wrap_blocks(blocks: &Vec<Vec<Vec<String>>>, maximum_lines: usize) -> Vec<Vec<Vec<String>>>{
+    if blocks.len() == 0 {
+        return blocks.clone();
+    }
 
-            let mut block_index: usize = 0;
-            while block_index < primary_blocks.len() {
-                if primary_blocks[block_index].len() > maximum_lines {
-                    let splitter = min(maximum_lines, primary_blocks[block_index].len()/2);
-                    let mut line_index = splitter;
-                    while line_index < primary_blocks.len() {
-                        let primary_line = primary_blocks[block_index].remove(line_index);
-                        if primary_blocks.get(block_index +1).is_none() {
-                            primary_blocks.push(vec![]);
-                            secondary_blocks.push(vec![]);
-                        }
-                        primary_blocks[block_index +1].insert(line_index-splitter, primary_line);
-
-                        // Here the secondary block will be moved if available
-                        if secondary_blocks[block_index].get(line_index).is_some() {
-                            let secondary_line = secondary_blocks[block_index].remove(line_index);
-                            secondary_blocks[block_index+1].insert(line_index-splitter, secondary_line);
-                        }
-                    }
-                }
-                block_index += 1;
+    let first_block_length = blocks[0].len();
+    if blocks.len() > 1 {
+        for i in 1..blocks.len() {
+            if blocks[i].len() != first_block_length {
+                panic!("The length of every block has to be equal.")
             }
-        }
-        None => {
-            todo!("Implement")
         }
     }
+
+    let mut wrapped_blocks = blocks.clone();
+
+    let mut block_index: usize = 0;
+    while block_index < wrapped_blocks[0].len() {
+        if wrapped_blocks[0][block_index].len() > maximum_lines {
+            let splitter = min(maximum_lines, wrapped_blocks[0][block_index].len()/2);
+            let mut line_index = splitter;
+            while line_index < wrapped_blocks[0][block_index].len() {
+                let primary_line = wrapped_blocks[0][block_index].remove(line_index);
+                if wrapped_blocks[0].get(block_index +1).is_none() {
+                    wrapped_blocks
+                        .iter_mut()
+                        .for_each(|mut block| {block.push(vec![])})
+                }
+                wrapped_blocks[0][block_index+1].insert(line_index-splitter, primary_line);
+
+                // Here the other blocks will be moved as well if they are available
+                for block in wrapped_blocks.iter_mut().skip(1) {
+                    if line_index < block[block_index].len() {
+                        let primary_line = block[block_index].remove(line_index);
+                        block[block_index+1].insert(line_index-splitter, primary_line);
+                    }
+                }
+                
+            }
+        }
+        block_index += 1;
+    }
+    wrapped_blocks
 }
 
 #[cfg(test)]
@@ -264,5 +270,22 @@ mod tests {
 
         let slide_2 = Slide::new_content_slide("Test".to_string(), Some("".to_string()), Some("".to_string()));
         assert_eq!(slide_2.has_spoiler(), false);
+    }
+    
+    #[test]
+    fn test_wrap_blocks_function() {
+        let example_blocks = vec![
+            vec![
+                vec!["Test".to_string(), "Hallo".to_string(), "Hallo".to_string(), "Hallo".to_string()],
+                vec!["Test".to_string(), "Hallo".to_string(), "Hallo".to_string(), "Hallo".to_string(), "Welt".to_string()],
+            ],
+            vec![
+                vec!["Test".to_string(), "Hallo".to_string(), "Hallo".to_string(), "Hallo".to_string()],
+                vec!["Test".to_string(), "Hallo".to_string(), "Hallo".to_string(), "Hallo".to_string(), "Welt".to_string()],
+            ],
+        ];
+        
+        let wrapped_blocks = wrap_blocks(&example_blocks, 3);
+        dbg!(&wrapped_blocks);
     }
 }
