@@ -1,13 +1,38 @@
 //! Here the logic for the slides is implemented
 
-use std::cmp::{max, min};
+use std::cmp::{min};
 use serde::{Serialize, Deserialize};
 
 use crate::importer::SongFile;
 
 
-/// A Presentation which can be displayed
-pub type Presentation = Vec<Slide>;
+// A Presentation Chapter (mostly representing a song) which should be displayed
+#[derive(Clone, Serialize, Deserialize, PartialEq, Debug)]
+pub struct PresentationChapter {
+    /// The slides
+    pub slides: Vec<Slide>,
+    /// The linked entity -> most likely the song which was the source where the Presentation came from. Other entities might be imported later.
+    pub linked_entity: LinkedEntity,
+}
+
+impl PresentationChapter {
+    pub fn new(slides: Vec<Slide>, linked_entity: LinkedEntity) -> Self {
+        PresentationChapter {
+            slides,
+            linked_entity
+        }
+    }
+}
+
+/// Any source where slides can come from (now just a song, other sources might follow later)
+#[derive(Clone, Serialize, Deserialize, PartialEq, Debug)]
+pub enum LinkedEntity {
+    /// A song as source for the presentation (the song has to be given as an argument)
+    Song(Song),
+    /// Just a Title which is given (e.g. if the presentation has been imported directly)
+    Title(String),
+    SongFile(SongFile),
+}
 
 /// The enum which contains all possible contents of a slide
 #[derive(Clone, Serialize, Deserialize, PartialEq, Debug)]
@@ -76,6 +101,17 @@ impl Slide {
             SlideContent::SingleLanguageMainContent(single_language_main_content_slide) => single_language_main_content_slide.spoiler_text.is_some(),
             SlideContent::Title(_) => false,
             SlideContent::MultiLanguageMainContent(multi_language_main_content_slide) => multi_language_main_content_slide.spoiler_text_vector.len() > 0,
+            SlideContent::SimplePicture(_) => false,
+            SlideContent::Empty(_) => false,
+        }
+    }
+
+
+    pub fn has_meta_text(&self) -> bool {
+        match &self.slide_content {
+            SlideContent::SingleLanguageMainContent(single_language_main_content_slide) => single_language_main_content_slide.meta_text.is_some(),
+            SlideContent::Title(title_slide) => title_slide.meta_text.is_some(),
+            SlideContent::MultiLanguageMainContent(multi_language_main_content_slide) => multi_language_main_content_slide.meta_text.is_some(),
             SlideContent::SimplePicture(_) => false,
             SlideContent::Empty(_) => false,
         }
@@ -245,7 +281,7 @@ pub fn wrap_blocks(blocks: &Vec<Vec<Vec<String>>>, maximum_lines: usize) -> Vec<
                         block[block_index+1].insert(line_index-splitter, primary_line);
                     }
                 }
-                
+
             }
         }
         block_index += 1;
@@ -271,7 +307,7 @@ mod tests {
         let slide_2 = Slide::new_content_slide("Test".to_string(), Some("".to_string()), Some("".to_string()));
         assert_eq!(slide_2.has_spoiler(), false);
     }
-    
+
     #[test]
     fn test_wrap_blocks_function() {
         let example_blocks = vec![
@@ -284,7 +320,7 @@ mod tests {
                 vec!["Test".to_string(), "Hallo".to_string(), "Hallo".to_string(), "Hallo".to_string(), "Welt".to_string()],
             ],
         ];
-        
+
         let wrapped_blocks = wrap_blocks(&example_blocks, 3);
         dbg!(&wrapped_blocks);
     }
