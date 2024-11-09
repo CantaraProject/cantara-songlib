@@ -1,39 +1,14 @@
-//! In this module, the logic for presenting slides is implemented. In Cantara, a presentation is logically organized of several `PresentationChapter`s which are linked to a source where they are generated from (`linked_entity field`). A presentation chapter consists of `slides` of type `Vec<Type>`.
-//! Presentation Slides describe the logic which ought to be displayed (the fields and the structure). This can be rendered by the frontend or an exporter.
-//! SlideSettings are used to influence how slides are **generated**.
+//! Here the logic for the slides is implemented
 
+use std::cmp::{max, min};
+use std::slice::range;
 use serde::{Serialize, Deserialize};
 
-use crate::{importer::SongFile, song::Song};
+use crate::importer::SongFile;
 
 
-/// A Presentation Chapter (mostly representing a song) which should be displayed
-#[derive(Clone, Serialize, Deserialize, PartialEq, Debug)]
-pub struct PresentationChapter {
-    /// The slides
-    pub slides: Vec<Slide>,
-    /// The linked entity -> most likely the song which was the source where the Presentation came from. Other entities might be imported later.
-    pub linked_entity: LinkedEntity,
-}
-
-impl PresentationChapter {
-    pub fn new(slides: Vec<Slide>, linked_entity: LinkedEntity) -> Self {
-        PresentationChapter { 
-            slides, 
-            linked_entity
-        }
-    }
-}
-
-/// Any source where slides can come from (now just a song, other sources might follow later)
-#[derive(Clone, Serialize, Deserialize, PartialEq, Debug)]
-pub enum LinkedEntity {
-    /// A song as source for the presentation (the song has to be given as an argument)
-    Song(Song),
-    /// Just a Title which is given (e.g. if the presentation has been imported directly)
-    Title(String),
-    SongFile(SongFile),
-}
+/// A Presentation which can be displayed
+pub type Presentation = Vec<Slide>;
 
 /// The enum which contains all possible contents of a slide
 #[derive(Clone, Serialize, Deserialize, PartialEq, Debug)]
@@ -102,16 +77,6 @@ impl Slide {
             SlideContent::SingleLanguageMainContent(single_language_main_content_slide) => single_language_main_content_slide.spoiler_text.is_some(),
             SlideContent::Title(_) => false,
             SlideContent::MultiLanguageMainContent(multi_language_main_content_slide) => multi_language_main_content_slide.spoiler_text_vector.len() > 0,
-            SlideContent::SimplePicture(_) => false,
-            SlideContent::Empty(_) => false,
-        }
-    }
-
-    pub fn has_meta_text(&self) -> bool {
-        match &self.slide_content {
-            SlideContent::SingleLanguageMainContent(single_language_main_content_slide) => single_language_main_content_slide.meta_text.is_some(),
-            SlideContent::Title(title_slide) => title_slide.meta_text.is_some(),
-            SlideContent::MultiLanguageMainContent(multi_language_main_content_slide) => multi_language_main_content_slide.meta_text.is_some(),
             SlideContent::SimplePicture(_) => false,
             SlideContent::Empty(_) => false,
         }
@@ -189,7 +154,7 @@ pub struct SimplePictureSlide {
 }
 
 
-/// Struct for specifing the settings when creating presentation slides
+/// Struct for specifying the settings when creating presentation slides
 pub struct SlideSettings {
     title_slide: bool,
     show_spoiler: bool,
@@ -235,8 +200,55 @@ impl PresentationSettings {
     }
 }
 
+/// This function wraps the blocks, so that the number of lines never exeeds maximum_lines.
+/// The second block is optional and will be wrapped accordingly to the first one.
+/// **Warning: This function will panic, if the length of a given `secondary_block` is not equal to the length of the primary block**
+///
+/// # Arguments
+/// - `primary_blocks`: A &mut <Vec<Vec<String>> with the primary block which should be wrapped
+/// - `secondary_blocks': An Option<&mut Vec<Vec<String>>> with the secondary block which should be wrapped.
+/// Panics if secondary_block is Some(s) but s.len() != primary_block.len()
+/// - `maximum_lines`: The number of maximum lines which should be in a block.
+/// # Returns
+/// Nothing, the changes will be written to `primary_block` and `secondary_block`.
+pub fn wrap_blocks(primary_blocks: &mut Vec<Vec<String>>, secondary_blocks_option: Option<&mut Vec<Vec<String>>>, maximum_lines: usize) {
+    match secondary_blocks_option {
+        Some(secondary_blocks) => {
+            if secondary_blocks.len() != primary_blocks.len() {
+                panic!("Block length mismatch. Please read the documentation of wrap_blocks!");
+            }
+
+            let mut block_index: usize = 0;
+            while block_index < primary_blocks.len() {
+                if primary_blocks[block_index].len() > maximum_lines {
+                    let splitter = min(maximum_lines, primary_blocks[block_index].len()/2);
+                    let mut line_index = splitter;
+                    while line_index < primary_blocks.len() {
+                        let primary_line = primary_blocks[block_index].remove(line_index);
+                        if primary_blocks.get(block_index +1).is_none() {
+                            primary_blocks.push(vec![]);
+                            secondary_blocks.push(vec![]);
+                        }
+                        primary_blocks[block_index +1].insert(line_index-splitter, primary_line);
+
+                        // Here the secondary block will be moved if available
+                        if secondary_blocks[block_index].get(line_index).is_some() {
+                            let secondary_line = secondary_blocks[block_index].remove(line_index);
+                            secondary_blocks[block_index+1].insert(line_index-splitter, secondary_line);
+                        }
+                    }
+                }
+                block_index += 1;
+            }
+        }
+        None => {
+            todo!("Implement")
+        }
+    }
+}
+
 #[cfg(test)]
-mod test {
+mod tests {
     use super::*;
 
     #[test]
