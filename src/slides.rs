@@ -235,17 +235,17 @@ impl PresentationSettings {
     }
 }
 
-/// This function wraps the blocks, so that the number of lines never exeeds maximum_lines.
+/// This function wraps the blocks, so that the number of lines never exceeds maximum_lines.
 /// The second block is optional and will be wrapped accordingly to the first one.
 /// **Warning: This function will panic, if the length of a given secondary blocks are not equal to the length of the primary block**
 ///
 /// # Arguments
-/// - `blocks`: A &mut Vec<Vec<Vec<String>>> with all the blocks which should be wrapped
+/// - `blocks`: A `&mut Vec<Vec<Vec<String>>>` with all the blocks which should be wrapped
 /// - `maximum_lines`: The number of maximum lines which a block may have
 /// - `persistence`: Whether block brakes are to be preserved (recommended is true)
 /// Panics if secondary_block is Some(s) but s.len() != primary_block.len()
 /// # Returns
-/// The modified blocks as Vec<Vec<Vec<String>>>
+/// The modified blocks as `Vec<Vec<Vec<String>>>`
 pub fn wrap_blocks(blocks: &Vec<Vec<Vec<String>>>, maximum_lines: usize, persistence: bool) -> Vec<Vec<Vec<String>>>{
     if blocks.is_empty() {
         return blocks.clone();
