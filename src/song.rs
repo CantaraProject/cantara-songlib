@@ -1,11 +1,10 @@
 extern crate regex;
 use core::fmt;
 use regex::Regex;
-use std::{cell::RefCell, collections::HashMap, rc::Rc, path::Path};
+use std::{cell::RefCell, collections::HashMap, rc::Rc};
 
 extern crate serde;
 use serde::{Deserialize, Serialize};
-use crate::song::SongPartType::Chorus;
 
 /// Object which represents a song in Cantara
 #[derive(Clone, Serialize, Deserialize, PartialEq, Debug)]
@@ -83,7 +82,7 @@ impl Song {
         let id: String = format!(
             "{}.{}",
             part_type.to_string(),
-            specific_number_option.unwrap_or_else(|| specific_number)
+            specific_number_option.unwrap_or(specific_number)
         );
         
         let part: SongPart = SongPart::new(SongPartId::parse(&id).unwrap(), specific_number);
@@ -571,7 +570,7 @@ impl SongPart {
     }
 
     pub fn update_id(&mut self) {
-        self.id = SongPartId::parse(&format!("{}.{}", self.part_type.to_string(), self.number.to_string())).unwrap();
+        self.id = SongPartId::parse(&format!("{}.{}", self.part_type.to_string(), self.number)).unwrap();
     }
 }
 
@@ -649,13 +648,13 @@ impl PartOrder {
         let stanza_parts: Vec<Rc<RefCell<SongPart>>> = song.get_parts_by_type(SongPartType::Verse);
         let chorus_parts: Vec<Rc<RefCell<SongPart>>> = song.get_parts_by_type(SongPartType::Chorus);
 
-        if chorus_parts.len() == 0 {
+        if chorus_parts.is_empty() {
             return stanza_parts;
         }
 
         let mut current_choruses: Vec<Rc<RefCell<SongPart>>> = Vec::new();
 
-        for (part_refcell) in song.parts.clone() {
+        for part_refcell in song.parts.clone() {
             let part = part_refcell.borrow().clone();
             if part.part_type == SongPartType::Verse {
                 parts.push(Rc::new(RefCell::new(part)));

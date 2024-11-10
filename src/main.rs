@@ -10,7 +10,7 @@ fn main() {
     match args.get(1) {
         Some(filepath) => {
             println!("{}", 
-                match get_song_from_file_as_json(&filepath) {
+                match get_song_from_file_as_json(filepath) {
                     Ok(parsed_json) => parsed_json,
                     Err(error) => error.to_string()
                 }        

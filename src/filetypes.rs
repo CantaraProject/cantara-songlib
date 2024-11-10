@@ -36,8 +36,8 @@ mod tests {
 
     #[test]
     fn test_contains_song_structure() {
-        assert_eq!(contains_song_structure(FileType::CCLISongselectFile), true);
-        assert_eq!(contains_song_structure(FileType::ClassicSongFile), false);
-        assert_eq!(contains_song_structure(FileType::CSSF), true);
+        assert!(contains_song_structure(FileType::CCLISongselectFile));
+        assert!(!contains_song_structure(FileType::ClassicSongFile));
+        assert!(contains_song_structure(FileType::CSSF));
     }
 }

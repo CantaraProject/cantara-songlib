@@ -100,7 +100,7 @@ impl Slide {
         match &self.slide_content {
             SlideContent::SingleLanguageMainContent(single_language_main_content_slide) => single_language_main_content_slide.spoiler_text.is_some(),
             SlideContent::Title(_) => false,
-            SlideContent::MultiLanguageMainContent(multi_language_main_content_slide) => multi_language_main_content_slide.spoiler_text_vector.len() > 0,
+            SlideContent::MultiLanguageMainContent(multi_language_main_content_slide) => !multi_language_main_content_slide.spoiler_text_vector.is_empty(),
             SlideContent::SimplePicture(_) => false,
             SlideContent::Empty(_) => false,
         }
@@ -247,7 +247,7 @@ impl PresentationSettings {
 /// # Returns
 /// The modified blocks as Vec<Vec<Vec<String>>>
 pub fn wrap_blocks(blocks: &Vec<Vec<Vec<String>>>, maximum_lines: usize, persistence: bool) -> Vec<Vec<Vec<String>>>{
-    if blocks.len() == 0 {
+    if blocks.is_empty() {
         return blocks.clone();
     }
 
@@ -307,10 +307,10 @@ mod tests {
     #[test]
     fn check_has_spoiler_function() {
         let slide_1 = Slide::new_content_slide("Test".to_string(), Some("Hallo".to_string()), None);
-        assert_eq!(slide_1.has_spoiler(), true);
+        assert!(slide_1.has_spoiler());
 
         let slide_2 = Slide::new_content_slide("Test".to_string(), Some("".to_string()), Some("".to_string()));
-        assert_eq!(slide_2.has_spoiler(), false);
+        assert!(!slide_2.has_spoiler());
     }
 
     #[test]

@@ -23,7 +23,6 @@ use crate::song::{
 use crate::slides::*;
 use crate::templating::render_metadata;
 
-use super::SongFile;
 
 fn parse_metadata_block(block: &str) -> HashMap<String, String> {
     let mut metadata: HashMap<String, String> = HashMap::new();
@@ -233,7 +232,7 @@ fn slides_from_classic_song(
         ) {
         match meta_block_flag {
                 true => { 
-                    parse_metadata_block(&cur_block_string)
+                    parse_metadata_block(cur_block_string)
                     .iter()
                     .for_each(|(key, value)| {
                         metadata.insert(key.clone(), value.clone());
@@ -260,14 +259,12 @@ fn slides_from_classic_song(
     for line in content.trim().lines() {
         if empty_line { start_block_flag = true };
         
-        if start_block_flag {
-            if !line.is_empty() {
-                meta_block_flag = match line.chars().next().unwrap() {
-                    '#' => true,
-                    _   => false,
-                };
-                start_block_flag = false;
-            }
+        if start_block_flag && !line.is_empty() {
+            meta_block_flag = match line.chars().next().unwrap() {
+                '#' => true,
+                _   => false,
+            };
+            start_block_flag = false;
         }
         
         if line.trim().is_empty() {
@@ -299,11 +296,11 @@ fn slides_from_classic_song(
         else {
             match writing_area {
                 WritingArea::MainBlock => {
-                    cur_block_string.push_str("\n");
+                    cur_block_string.push('\n');
                     cur_block_string.push_str(line);
                 },
                 WritingArea::SecondaryBlock => {
-                    cur_secundary_block_string.push_str("\n");
+                    cur_secundary_block_string.push('\n');
                     cur_secundary_block_string.push_str(line);
                 }
             }
@@ -489,7 +486,7 @@ mod test {
             "Verily, Verily".to_string()
         );
         
-        assert!(slides.len() > 0);
+        assert!(!slides.is_empty());
         
         dbg!(slides);
     }
