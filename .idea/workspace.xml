@@ -7,21 +7,24 @@
     <cargoProject FILE="$PROJECT_DIR$/Cargo.toml" />
   </component>
   <component name="ChangeListManager">
-    <list default="true" id="8beced57-ba15-4023-9c7a-4f9a730767cb" name="Changes" comment="" />
+    <list default="true" id="8beced57-ba15-4023-9c7a-4f9a730767cb" name="Changes" comment="Bug fix line wrap function">
+      <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
+    </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
     <option name="HIGHLIGHT_NON_ACTIVE_CHANGELIST" value="false" />
     <option name="LAST_RESOLUTION" value="IGNORE" />
   </component>
+  <component name="ExecutionTargetManager" SELECTED_TARGET="RsBuildProfile:test" />
   <component name="Git.Settings">
     <option name="RECENT_GIT_ROOT_PATH" value="$PROJECT_DIR$" />
   </component>
   <component name="MacroExpansionManager">
     <option name="directoryName" value="by760ecf" />
   </component>
-  <component name="ProjectColorInfo"><![CDATA[{
-  "associatedIndex": 7
-}]]></component>
+  <component name="ProjectColorInfo">{
+  &quot;associatedIndex&quot;: 7
+}</component>
   <component name="ProjectId" id="2n1Iplp8jJYmmXNuldt8iFEliuf" />
   <component name="ProjectViewState">
     <option name="hideEmptyMiddlePackages" value="true" />
@@ -29,17 +32,51 @@
   </component>
   <component name="PropertiesComponent"><![CDATA[{
   "keyToString": {
+    "Cargo.Doctest of song::add_guessed_part_order (line 272).executor": "Run",
+    "Cargo.Test cantara-songlib.executor": "Run",
+    "Cargo.Test classic_song::test.executor": "Run",
+    "Cargo.Test importer::classic_song::test::test_metadata_parsing.executor": "Run",
+    "Cargo.Test slides::tests::test_wrap_blocks_function.executor": "Run",
+    "Cargo.Test song::tests::test_add_content_with_multiple_parts.executor": "Run",
     "RunOnceActivity.ShowReadmeOnStart": "true",
     "RunOnceActivity.rust.reset.selective.auto.import": "true",
     "git-widget-placeholder": "master",
-    "last_opened_file_path": "/home/wuki/Projects/rust/cantara-leptos",
+    "last_opened_file_path": "/home/wuki/Projekte/cantara-songlib",
+    "node.js.detected.package.eslint": "true",
+    "node.js.detected.package.tslint": "true",
+    "node.js.selected.package.eslint": "(autodetect)",
+    "node.js.selected.package.tslint": "(autodetect)",
     "nodejs_package_manager_path": "npm",
     "org.rust.cargo.project.model.PROJECT_DISCOVERY": "true",
-    "org.rust.first.attach.projects": "true"
+    "org.rust.cargo.project.model.impl.CargoExternalSystemProjectAware.subscribe.first.balloon": "",
+    "org.rust.first.attach.projects": "true",
+    "settings.editor.selected.configurable": "language.rust.cargo.check",
+    "vue.rearranger.settings.migration": "true"
   }
 }]]></component>
-  <component name="RunManager">
+  <component name="RsExternalLinterProjectSettings">
+    <option name="runOnTheFly" value="true" />
+  </component>
+  <component name="RunManager" selected="Cargo.Test slides::tests::test_wrap_blocks_function">
+    <configuration name="Doctest of song::add_guessed_part_order (line 272)" type="CargoCommandRunConfiguration" factoryName="Cargo Command" temporary="true">
+      <option name="command" value="test --package cantara-songlib --doc &quot;song::add_guessed_part_order\ (line\ 272)&quot;" />
+      <option name="workingDirectory" value="file://$PROJECT_DIR$" />
+      <envs />
+      <option name="emulateTerminal" value="true" />
+      <option name="channel" value="DEFAULT" />
+      <option name="requiredFeatures" value="true" />
+      <option name="allFeatures" value="false" />
+      <option name="withSudo" value="false" />
+      <option name="buildTarget" value="REMOTE" />
+      <option name="backtrace" value="SHORT" />
+      <option name="isRedirectInput" value="false" />
+      <option name="redirectInputPath" value="" />
+      <method v="2">
+        <option name="CARGO.BUILD_TASK_PROVIDER" enabled="true" />
+      </method>
+    </configuration>
     <configuration name="Test cantara-songlib" type="CargoCommandRunConfiguration" factoryName="Cargo Command">
+      <option name="buildProfileId" value="test" />
       <option name="command" value="test --workspace" />
       <option name="workingDirectory" value="file://$PROJECT_DIR$" />
       <envs />
@@ -56,6 +93,83 @@
         <option name="CARGO.BUILD_TASK_PROVIDER" enabled="true" />
       </method>
     </configuration>
+    <configuration name="Test classic_song::test" type="CargoCommandRunConfiguration" factoryName="Cargo Command" temporary="true">
+      <option name="command" value="test --package cantara-songlib --lib importer::classic_song::test" />
+      <option name="workingDirectory" value="file://$PROJECT_DIR$" />
+      <envs />
+      <option name="emulateTerminal" value="true" />
+      <option name="channel" value="DEFAULT" />
+      <option name="requiredFeatures" value="true" />
+      <option name="allFeatures" value="false" />
+      <option name="withSudo" value="false" />
+      <option name="buildTarget" value="REMOTE" />
+      <option name="backtrace" value="SHORT" />
+      <option name="isRedirectInput" value="false" />
+      <option name="redirectInputPath" value="" />
+      <method v="2">
+        <option name="CARGO.BUILD_TASK_PROVIDER" enabled="true" />
+      </method>
+    </configuration>
+    <configuration name="Test importer::classic_song::test::test_metadata_parsing" type="CargoCommandRunConfiguration" factoryName="Cargo Command" temporary="true">
+      <option name="command" value="test --package cantara-songlib --lib importer::classic_song::test::test_metadata_parsing -- --exact" />
+      <option name="workingDirectory" value="file://$PROJECT_DIR$" />
+      <envs />
+      <option name="emulateTerminal" value="true" />
+      <option name="channel" value="DEFAULT" />
+      <option name="requiredFeatures" value="true" />
+      <option name="allFeatures" value="false" />
+      <option name="withSudo" value="false" />
+      <option name="buildTarget" value="REMOTE" />
+      <option name="backtrace" value="SHORT" />
+      <option name="isRedirectInput" value="false" />
+      <option name="redirectInputPath" value="" />
+      <method v="2">
+        <option name="CARGO.BUILD_TASK_PROVIDER" enabled="true" />
+      </method>
+    </configuration>
+    <configuration name="Test slides::tests::test_wrap_blocks_function" type="CargoCommandRunConfiguration" factoryName="Cargo Command" temporary="true">
+      <option name="command" value="test --package cantara-songlib --lib slides::tests::test_wrap_blocks_function -- --exact" />
+      <option name="workingDirectory" value="file://$PROJECT_DIR$" />
+      <envs />
+      <option name="emulateTerminal" value="true" />
+      <option name="channel" value="DEFAULT" />
+      <option name="requiredFeatures" value="true" />
+      <option name="allFeatures" value="false" />
+      <option name="withSudo" value="false" />
+      <option name="buildTarget" value="REMOTE" />
+      <option name="backtrace" value="SHORT" />
+      <option name="isRedirectInput" value="false" />
+      <option name="redirectInputPath" value="" />
+      <method v="2">
+        <option name="CARGO.BUILD_TASK_PROVIDER" enabled="true" />
+      </method>
+    </configuration>
+    <configuration name="Test song::tests::test_add_content_with_multiple_parts" type="CargoCommandRunConfiguration" factoryName="Cargo Command" temporary="true">
+      <option name="command" value="test --package cantara-songlib --lib song::tests::test_add_content_with_multiple_parts -- --exact" />
+      <option name="workingDirectory" value="file://$PROJECT_DIR$" />
+      <envs />
+      <option name="emulateTerminal" value="true" />
+      <option name="channel" value="DEFAULT" />
+      <option name="requiredFeatures" value="true" />
+      <option name="allFeatures" value="false" />
+      <option name="withSudo" value="false" />
+      <option name="buildTarget" value="REMOTE" />
+      <option name="backtrace" value="SHORT" />
+      <option name="isRedirectInput" value="false" />
+      <option name="redirectInputPath" value="" />
+      <method v="2">
+        <option name="CARGO.BUILD_TASK_PROVIDER" enabled="true" />
+      </method>
+    </configuration>
+    <recent_temporary>
+      <list>
+        <item itemvalue="Cargo.Test slides::tests::test_wrap_blocks_function" />
+        <item itemvalue="Cargo.Doctest of song::add_guessed_part_order (line 272)" />
+        <item itemvalue="Cargo.Test importer::classic_song::test::test_metadata_parsing" />
+        <item itemvalue="Cargo.Test classic_song::test" />
+        <item itemvalue="Cargo.Test song::tests::test_add_content_with_multiple_parts" />
+      </list>
+    </recent_temporary>
   </component>
   <component name="RustProjectSettings">
     <option name="toolchainHomeDirectory" value="/usr/bin" />
@@ -69,7 +183,64 @@
       <option name="presentableId" value="Default" />
       <updated>1728134342785</updated>
       <workItem from="1728134346476" duration="44000" />
+      <workItem from="1730566564112" duration="6036000" />
+      <workItem from="1731164199993" duration="3849000" />
+      <workItem from="1731181518142" duration="3962000" />
     </task>
+    <task id="LOCAL-00001" summary="Implement Order Creation">
+      <option name="closed" value="true" />
+      <created>1730569578541</created>
+      <option name="number" value="00001" />
+      <option name="presentableId" value="LOCAL-00001" />
+      <option name="project" value="LOCAL" />
+      <updated>1730569578541</updated>
+    </task>
+    <task id="LOCAL-00002" summary="Fix metadata parsing test and add trimming to key/value">
+      <option name="closed" value="true" />
+      <created>1730570245794</created>
+      <option name="number" value="00002" />
+      <option name="presentableId" value="LOCAL-00002" />
+      <option name="project" value="LOCAL" />
+      <updated>1730570245794</updated>
+    </task>
+    <task id="LOCAL-00003" summary="Bug fix, add wrapper functions">
+      <option name="closed" value="true" />
+      <created>1730572580186</created>
+      <option name="number" value="00003" />
+      <option name="presentableId" value="LOCAL-00003" />
+      <option name="project" value="LOCAL" />
+      <updated>1730572580186</updated>
+    </task>
+    <task id="LOCAL-00004" summary="Bug fix line wrap function">
+      <option name="closed" value="true" />
+      <created>1731185481475</created>
+      <option name="number" value="00004" />
+      <option name="presentableId" value="LOCAL-00004" />
+      <option name="project" value="LOCAL" />
+      <updated>1731185481475</updated>
+    </task>
+    <option name="localTasksCounter" value="5" />
     <servers />
+  </component>
+  <component name="TypeScriptGeneratedFilesManager">
+    <option name="version" value="3" />
+  </component>
+  <component name="Vcs.Log.Tabs.Properties">
+    <option name="TAB_STATES">
+      <map>
+        <entry key="MAIN">
+          <value>
+            <State />
+          </value>
+        </entry>
+      </map>
+    </option>
+  </component>
+  <component name="VcsManagerConfiguration">
+    <MESSAGE value="Implement Order Creation" />
+    <MESSAGE value="Fix metadata parsing test and add trimming to key/value" />
+    <MESSAGE value="Bug fix, add wrapper functions" />
+    <MESSAGE value="Bug fix line wrap function" />
+    <option name="LAST_COMMIT_MESSAGE" value="Bug fix line wrap function" />
   </component>
 </project>
