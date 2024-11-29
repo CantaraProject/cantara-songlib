@@ -45,7 +45,7 @@ pub enum SlideContent {
 }
 
 
-/// This represents a slide which is presented
+/// A struct which represents a presented slide
 #[derive(Clone, Serialize, Deserialize, PartialEq, Debug)]
 pub struct Slide {
     pub slide_content: SlideContent,
@@ -121,9 +121,11 @@ impl Slide {
 /// A slide which consists of at least a Main Text, an optional Spoiler Text with the content of the next slide and an optional Meta Text with additional information.
 #[derive(Clone, Serialize, Deserialize, PartialEq, Debug)]
 pub struct SingleLanguageMainContentSlide {
-    /// The mandatory main text which is to display
+    /// The mandatory main text which will be displayed
     main_text: String,
+    /// A smaller spoiler text which is displayed below the main text if present. It can be used to spoil the next slide or to show a secondary block content.
     spoiler_text: Option<String>,
+    /// Meta information which are displayed on the slide (mostly on the bottom corner)
     meta_text: Option<String>,
 }
 
@@ -189,13 +191,22 @@ pub struct SimplePictureSlide {
 }
 
 
-/// Struct for specifying the settings when creating presentation slides
+/// Struct for specifying the settings for creating presentation slides.
+/// Importers or slide creators may use this as a generic way to specify the parameters for the slide creation process.
+/// Not all settings have to be used by every importer or slide creator.
 pub struct SlideSettings {
+    /// Specifies whether a special title slide for the song should be generated
     title_slide: bool,
+    /// Specifies whether a spoiler should be shown as a secondary block
     show_spoiler: bool,
+    /// Specifies whether and how to display meta information
     show_meta_information: ShowMetaInformation,
+    /// Specifies the meta information syntax as a handlebar template
     meta_information_syntax: String,
+    /// Specifies whether an empty slide at the end of each song should be added
     empty_slide_at_the_ending: bool,
+    /// Specifies the maximum amount of lines of each block. If the number is higher, the slides will be wrapped into several ones. In case of `None` this is ignored.
+    max_lines: Option<usize>,
 }
 
 
@@ -214,23 +225,29 @@ pub enum ShowMetaInformation {
 /// A generic enum which can be used to define Presentation Settings for the **generation**
 /// This concerns the content/structure of the presentation, not(!) the design
 pub struct PresentationSettings {
-    pub show_title_slide: bool,
+    /// Specifies whether a special title slide for the song should be generated
+    pub title_slide: bool,
     pub meta_syntax: String,
+    /// Specifies whether and how to display meta information
     pub meta_syntax_on_first_slide: bool,
     pub meta_syntax_on_last_slide: bool,
     pub empty_last_slide: bool,
-    pub spoiler: bool
+    /// Specifies whether a spoiler should be shown as a secondary block
+    pub spoiler: bool,
+    /// Specifies the maximum amount of lines of each block. If the number is higher, the slides will be wrapped into several ones. In case of `None` this is ignored.
+    pub max_lines: Option<usize>,
 }
 
 impl PresentationSettings {
     pub fn default() -> Self {
         PresentationSettings { 
-            show_title_slide: true, 
+            title_slide: true, 
             meta_syntax: "".to_string(),
             meta_syntax_on_first_slide: true, 
             meta_syntax_on_last_slide: true, 
             empty_last_slide: true, 
-            spoiler: true 
+            spoiler: true ,
+            max_lines: None,
         }
     }
 }

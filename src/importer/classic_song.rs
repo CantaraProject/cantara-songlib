@@ -185,7 +185,7 @@ pub fn import_song(content: &str) -> Result<Song, Box<dyn Error>> {
 /// 
 /// # Returns
 /// A Vec<Slide> with the slides. This can be integrated into a PresentationChapter and a Presentation.
-fn slides_from_classic_song(
+pub fn slides_from_classic_song(
         content: &str, 
         presentation_settings: &PresentationSettings,
         backup_title: String) -> Vec<Slide> {
@@ -315,8 +315,12 @@ fn slides_from_classic_song(
         &mut blocks, 
         &mut secondary_blocks
     );
-    // TODO: Implement word wrap feature
-    
+
+    if presentation_settings.max_lines.is_some() {
+        let wrapped_blocks_output: Vec<Vec<Vec<String>>> = wrap_blocks(&vec![blocks, secondary_blocks], presentation_settings.max_lines.unwrap(), true);
+        blocks = wrapped_blocks_output.get(0).unwrap().clone();
+        secondary_blocks = wrapped_blocks_output.get(1).unwrap().clone();
+    }
 
     // Create the Presentation
     
@@ -336,9 +340,12 @@ fn slides_from_classic_song(
         Err(_) => false,
     };
 
+    // Make sure that the meta tag title is available (bugfix...)
+    if metadata.get("title").is_none() {
+        metadata.insert("title".to_string(), backup_title.clone());
+    }
 
-
-    if presentation_settings.show_title_slide {
+    if presentation_settings.title_slide {
         let displayed_meta_text = match meta_text_showable {
             true => Some(meta_text.clone()),
             false => None,
@@ -472,12 +479,13 @@ mod test {
         let testfile = std::fs::read_to_string("testfiles/O What A Savior That He Died For Me.song").unwrap();
         
         let presentation_settings   = PresentationSettings { 
-            show_title_slide: true, 
+            title_slide: true,
             meta_syntax: "{{title}} ({{author}})".to_string(), 
             meta_syntax_on_first_slide: true, 
             meta_syntax_on_last_slide: true, 
             empty_last_slide: true, 
-            spoiler: true 
+            spoiler: true ,
+            max_lines: Some(10),
         };
         
         let slides: Vec<Slide> = slides_from_classic_song(
@@ -496,12 +504,13 @@ mod test {
         let testfile = std::fs::read_to_string("testfiles/O What A Savior That He Died For Me.song").unwrap();
         
         let mut presentation_settings   = PresentationSettings { 
-            show_title_slide: false, 
+            title_slide: false,
             meta_syntax: "{{title}} ({{author}})".to_string(), 
             meta_syntax_on_first_slide: false, 
             meta_syntax_on_last_slide: false, 
             empty_last_slide: true, 
-            spoiler: true 
+            spoiler: true,
+            max_lines: None,
         };
 
         let slides: Vec<Slide> = slides_from_classic_song(

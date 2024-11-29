@@ -5,7 +5,7 @@
 mod errors;
 
 /// This module contains functions for importing classic song files.
-mod classic_song;
+pub mod classic_song;
 
 use errors::CantaraFileDoesNotExistError;
 use serde::{Deserialize, Serialize};
