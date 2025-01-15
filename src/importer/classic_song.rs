@@ -478,7 +478,7 @@ mod test {
     fn generate_slides() {
         let testfile = std::fs::read_to_string("testfiles/O What A Savior That He Died For Me.song").unwrap();
         
-        let presentation_settings   = PresentationSettings { 
+        let presentation_settings = PresentationSettings { 
             title_slide: true,
             meta_syntax: "{{title}} ({{author}})".to_string(), 
             meta_syntax_on_first_slide: true, 
