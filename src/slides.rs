@@ -196,19 +196,31 @@ pub struct SimplePictureSlide {
 /// Not all settings have to be used by every importer or slide creator.
 pub struct SlideSettings {
     /// Specifies whether a special title slide for the song should be generated
-    title_slide: bool,
+    pub title_slide: bool,
     /// Specifies whether a spoiler should be shown as a secondary block
-    show_spoiler: bool,
+    pub show_spoiler: bool,
     /// Specifies whether and how to display meta information
-    show_meta_information: ShowMetaInformation,
+    pub show_meta_information: ShowMetaInformation,
     /// Specifies the meta information syntax as a handlebar template
-    meta_information_syntax: String,
+    pub meta_syntax: String,
     /// Specifies whether an empty slide at the end of each song should be added
-    empty_slide_at_the_ending: bool,
+    pub empty_last_slide: bool,
     /// Specifies the maximum amount of lines of each block. If the number is higher, the slides will be wrapped into several ones. In case of `None` this is ignored.
-    max_lines: Option<usize>,
+    pub max_lines: Option<usize>,
 }
 
+impl SlideSettings {
+    pub fn default() -> Self {
+        SlideSettings { 
+            title_slide: true, 
+            meta_syntax: "".to_string(),
+            show_meta_information: ShowMetaInformation::FirstSlideAndLastSlide,
+            empty_last_slide: true, 
+            show_spoiler: true ,
+            max_lines: None,
+        }
+    }
+}
 
 /// Enum for specifing the settings for the showing of meta information
 pub enum ShowMetaInformation {
@@ -222,32 +234,18 @@ pub enum ShowMetaInformation {
     FirstSlideAndLastSlide
 }
 
-/// A generic enum which can be used to define Presentation Settings for the **generation**
-/// This concerns the content/structure of the presentation, not(!) the design
-pub struct PresentationSettings {
-    /// Specifies whether a special title slide for the song should be generated
-    pub title_slide: bool,
-    pub meta_syntax: String,
-    /// Specifies whether and how to display meta information
-    pub meta_syntax_on_first_slide: bool,
-    pub meta_syntax_on_last_slide: bool,
-    pub empty_last_slide: bool,
-    /// Specifies whether a spoiler should be shown as a secondary block
-    pub spoiler: bool,
-    /// Specifies the maximum amount of lines of each block. If the number is higher, the slides will be wrapped into several ones. In case of `None` this is ignored.
-    pub max_lines: Option<usize>,
-}
-
-impl PresentationSettings {
-    pub fn default() -> Self {
-        PresentationSettings { 
-            title_slide: true, 
-            meta_syntax: "".to_string(),
-            meta_syntax_on_first_slide: true, 
-            meta_syntax_on_last_slide: true, 
-            empty_last_slide: true, 
-            spoiler: true ,
-            max_lines: None,
+impl ShowMetaInformation {
+    pub fn on_first_slide(&self) -> bool {
+        match self {
+            ShowMetaInformation::FirstSlide | ShowMetaInformation::FirstSlideAndLastSlide => true,
+            _ => false,
+        }
+    }
+    
+    pub fn on_last_slide(&self) -> bool {
+        match self {
+            ShowMetaInformation::LastSlide | ShowMetaInformation::FirstSlideAndLastSlide => true,
+            _ => false,
         }
     }
 }

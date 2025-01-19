@@ -1,5 +1,5 @@
 use cantara_songlib::importer::classic_song::slides_from_classic_song;
-use cantara_songlib::slides::PresentationSettings;
+use cantara_songlib::slides::SlideSettings;
 
 use std::path::PathBuf;
 use clap::{Parser, Subcommand};
@@ -37,7 +37,7 @@ fn main() -> Result<(), std::io::Error> {
     match &cli.command {
         Commands::Presentation => {
             if file.extension() == Some(std::ffi::OsStr::new("song")) {
-                let settings = PresentationSettings::default();
+                let settings = SlideSettings::default();
 
                 let file_content = std::fs::read_to_string(&file).unwrap();
                 let slides = slides_from_classic_song(

@@ -186,9 +186,9 @@ pub fn import_song(content: &str) -> Result<Song, Box<dyn Error>> {
 /// # Returns
 /// A Vec<Slide> with the slides. This can be integrated into a PresentationChapter and a Presentation.
 pub fn slides_from_classic_song(
-        content: &str, 
-        presentation_settings: &PresentationSettings,
-        backup_title: String) -> Vec<Slide> {
+    content: &str,
+    slide_settings: &SlideSettings,
+    backup_title: String) -> Vec<Slide> {
     
     /// Defines the current parsing state (which area is to be parsed)
     enum WritingArea {
@@ -316,8 +316,8 @@ pub fn slides_from_classic_song(
         &mut secondary_blocks
     );
 
-    if presentation_settings.max_lines.is_some() {
-        let wrapped_blocks_output: Vec<Vec<Vec<String>>> = wrap_blocks(&vec![blocks, secondary_blocks], presentation_settings.max_lines.unwrap(), true);
+    if slide_settings.max_lines.is_some() {
+        let wrapped_blocks_output: Vec<Vec<Vec<String>>> = wrap_blocks(&vec![blocks, secondary_blocks], slide_settings.max_lines.unwrap(), true);
         blocks = wrapped_blocks_output.get(0).unwrap().clone();
         secondary_blocks = wrapped_blocks_output.get(1).unwrap().clone();
     }
@@ -327,7 +327,7 @@ pub fn slides_from_classic_song(
     let mut slides: Vec<Slide> = vec![];
 
     let meta_text_rendering_result = render_metadata(
-        &presentation_settings.meta_syntax, 
+        &slide_settings.meta_syntax,
         &metadata
     );
     let mut meta_text: String = "".to_string();
@@ -345,7 +345,7 @@ pub fn slides_from_classic_song(
         metadata.insert("title".to_string(), backup_title.clone());
     }
 
-    if presentation_settings.title_slide {
+    if slide_settings.title_slide {
         let displayed_meta_text = match meta_text_showable {
             true => Some(meta_text.clone()),
             false => None,
@@ -361,7 +361,7 @@ pub fn slides_from_classic_song(
     
     let count = blocks.len();
     for (index, block) in blocks.iter().enumerate() {
-        let displayed_meta_text = match meta_text_showable && (presentation_settings.meta_syntax_on_first_slide && index == 1) || (presentation_settings.meta_syntax_on_last_slide && index == count -1) {
+        let displayed_meta_text = match meta_text_showable && (slide_settings.show_meta_information.on_first_slide() && index == 1) || (slide_settings.show_meta_information.on_last_slide() && index == count -1) {
             true => Some(meta_text.clone()),
             false => None,
         };
@@ -393,7 +393,7 @@ pub fn slides_from_classic_song(
         }
     }
     
-    if presentation_settings.empty_last_slide {
+    if slide_settings.empty_last_slide {
         slides.push(
             Slide::new_empty_slide(false)    
         );
@@ -478,13 +478,12 @@ mod test {
     fn generate_slides() {
         let testfile = std::fs::read_to_string("testfiles/O What A Savior That He Died For Me.song").unwrap();
         
-        let presentation_settings = PresentationSettings { 
+        let presentation_settings = SlideSettings { 
             title_slide: true,
             meta_syntax: "{{title}} ({{author}})".to_string(), 
-            meta_syntax_on_first_slide: true, 
-            meta_syntax_on_last_slide: true, 
+            show_meta_information: ShowMetaInformation::FirstSlideAndLastSlide, 
             empty_last_slide: true, 
-            spoiler: true ,
+            show_spoiler: true ,
             max_lines: Some(10),
         };
         
@@ -503,13 +502,12 @@ mod test {
     fn test_metadata_displayed_correctly() {
         let testfile = std::fs::read_to_string("testfiles/O What A Savior That He Died For Me.song").unwrap();
         
-        let mut presentation_settings   = PresentationSettings { 
+        let mut presentation_settings   = SlideSettings { 
             title_slide: false,
             meta_syntax: "{{title}} ({{author}})".to_string(), 
-            meta_syntax_on_first_slide: false, 
-            meta_syntax_on_last_slide: false, 
+            show_meta_information: ShowMetaInformation::None,
             empty_last_slide: true, 
-            spoiler: true,
+            show_spoiler: true,
             max_lines: None,
         };
 
@@ -521,7 +519,7 @@ mod test {
 
         slides.iter().for_each(|slide| assert!(!slide.has_meta_text()));
 
-        presentation_settings.meta_syntax_on_first_slide = true;
+        presentation_settings.show_meta_information = ShowMetaInformation::FirstSlide;
         
         let slides: Vec<Slide> = slides_from_classic_song(
             &testfile, 
