@@ -37,7 +37,7 @@ fn main() -> Result<(), std::io::Error> {
     match &cli.command {
         Commands::Presentation => {
             if file.extension() == Some(std::ffi::OsStr::new("song")) {
-                let settings = SlideSettings::default();
+                let settings: SlideSettings = SlideSettings::default();
 
                 let file_content = std::fs::read_to_string(&file).unwrap();
                 let slides = slides_from_classic_song(

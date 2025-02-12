@@ -2,7 +2,7 @@
 //! Specific submodules are used for different file formats.
 
 /// This module contains defined errors which may occur during the import process.
-mod errors;
+pub mod errors;
 
 /// This module contains functions for importing classic song files.
 pub mod classic_song;

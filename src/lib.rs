@@ -16,6 +16,12 @@ At the moment, the following import formats are supported:
 - the CCLI song format (lyrics only), see ccli_song module. (under construction)
 */
 
+use importer::classic_song::slides_from_classic_song;
+use importer::errors::{CantaraFileDoesNotExistError, CantaraImportUnknownFileExtensionError};
+use slides::{Slide, SlideSettings};
+use std::error::Error;
+use std::path::PathBuf;
+
 
 /// - The `song` module contains the data structures needed for songs and its methods for managing and interpreting song data.
 pub mod song;
@@ -26,9 +32,29 @@ pub mod importer;
 /// The filetypes which are supported as input/output
 pub mod filetypes;
 
+/// The handling of song presentation slides
 pub mod slides;
 
+/// Templates which define the creation of slides and the insertion of data
 pub mod templating;
+
+pub fn create_presentation_from_file(file_path: PathBuf, slide_settings: SlideSettings) -> Result<Vec<Slide>, Box<dyn Error>> {
+    if file_path.extension() == Some(std::ffi::OsStr::new("song")) {
+
+        let file_content = std::fs::read_to_string(&file_path).unwrap();
+        let slides = slides_from_classic_song(
+            &file_content,
+            &slide_settings,
+            file_path.file_stem().unwrap().to_str().unwrap().to_string()
+        );
+
+        return Ok(slides);
+    }
+
+    Err(Box::new(CantaraImportUnknownFileExtensionError {
+        file_extension: "unknown".to_string()
+    }))
+}
 
 #[cfg(test)]
 mod tests {
