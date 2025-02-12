@@ -17,9 +17,10 @@ At the moment, the following import formats are supported:
 */
 
 use importer::classic_song::slides_from_classic_song;
-use importer::errors::{CantaraFileDoesNotExistError, CantaraImportUnknownFileExtensionError};
+use importer::errors::*;
 use slides::{Slide, SlideSettings};
 use std::error::Error;
+use std::ffi::{c_char, c_int};
 use std::path::PathBuf;
 
 
@@ -38,7 +39,27 @@ pub mod slides;
 /// Templates which define the creation of slides and the insertion of data
 pub mod templating;
 
+#[no_mangle]
+pub extern "C" fn create_presentation_from_file_c(
+    file_path: *const c_char,
+    title_slide: c_int,
+    show_spoiler: c_int,
+    show_meta_information: c_int,
+    meta_syntax: *const c_char,
+    empty_last_side: c_int,
+    max_lines: c_int
+) {
+    // TODO: Implement wrapper here
+}
+
+/// Create a presentation from a file and return the slides or an error if something went wrong
 pub fn create_presentation_from_file(file_path: PathBuf, slide_settings: SlideSettings) -> Result<Vec<Slide>, Box<dyn Error>> {
+    if !file_path.exists() {
+        return Err(
+            Box::new(CantaraFileDoesNotExistError)
+        )
+    }
+
     if file_path.extension() == Some(std::ffi::OsStr::new("song")) {
 
         let file_content = std::fs::read_to_string(&file_path).unwrap();
@@ -51,13 +72,21 @@ pub fn create_presentation_from_file(file_path: PathBuf, slide_settings: SlideSe
         return Ok(slides);
     }
 
-    Err(Box::new(CantaraImportUnknownFileExtensionError {
-        file_extension: "unknown".to_string()
-    }))
+    Err(
+        Box::new(
+            CantaraImportUnknownFileExtensionError {
+                file_extension: "unknown".to_string()
+            }
+        )
+    )
 }
 
 #[cfg(test)]
 mod tests {
+    use std::path::PathBuf;
+
+    use crate::{create_presentation_from_file, slides::SlideSettings};
+
     use super::song::Song;
 
     #[test]
@@ -66,5 +95,16 @@ mod tests {
         assert_eq!(song.title, "Test Song");
         assert_eq!(song.get_total_part_count(), 0);
         assert_eq!(song.get_unpacked_parts().len(), 0)
+    }
+
+    #[test]
+    fn test_file_does_not_exist_error() {
+        let file_path: PathBuf = "Ich existiere nicht.song".into();
+        let slide_settings: SlideSettings = SlideSettings::default();
+        
+        assert!(
+            create_presentation_from_file(file_path, slide_settings)
+            .is_err()
+        )
     }
 }
