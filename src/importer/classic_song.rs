@@ -318,7 +318,7 @@ pub fn slides_from_classic_song(
 
     if slide_settings.max_lines.is_some() {
         let wrapped_blocks_output: Vec<Vec<Vec<String>>> = wrap_blocks(&vec![blocks, secondary_blocks], slide_settings.max_lines.unwrap(), true);
-        blocks = wrapped_blocks_output.get(0).unwrap().clone();
+        blocks = wrapped_blocks_output.first().unwrap().clone();
         secondary_blocks = wrapped_blocks_output.get(1).unwrap().clone();
     }
 
