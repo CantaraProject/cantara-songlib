@@ -49,6 +49,7 @@ pub fn import_input_string(import_string: String, file_name: String) -> Result<S
             }
             cur_block = "".to_string();
             flag_first_line = true;
+            flag_first_block = false;
             
             continue;
         }
