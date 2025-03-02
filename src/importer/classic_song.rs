@@ -23,7 +23,7 @@ use crate::song::{
 use crate::slides::*;
 use crate::templating::render_metadata;
 
-use crate::importer::metadata::parse_metadata_block;
+use crate::importer::metadata::*;
 
 fn parse_block(block: &str, song: Song) -> Result<Song, Box<dyn Error>> {
     if block.is_empty() {
@@ -106,24 +106,13 @@ pub fn import_song(content: &str) -> Result<Song, Box<dyn Error>> {
         return Err(Box::new(CantaraImportNoContentError {}));
     }
 
-    // Make sure that the regex is only compiled once.
-    let title_regex: &Regex = {
-        static TITLE_REGEX: OnceLock<Regex> = OnceLock::new();
-        TITLE_REGEX.get_or_init(|| {
-            RegexBuilder::new(r"\s*#title:\s*(.+?)$")
-                .multi_line(true)
-                .build()
-                .unwrap()
-        })
-    };
-
     // Get the title either from the content or the filename
-    let title: &str = match title_regex.captures(content) {
-        Some(title_captures) => title_captures.get(1).unwrap().as_str(),
-        None => "",
+    let title: String = match get_title_from_file_content(content) {
+        Some(title_string) => title_string,
+        None => "".to_string()
     };
 
-    let mut song: Song = Song::new(title);
+    let mut song: Song = Song::new(&title);
 
     let mut part: String = String::new();
     // Parse the blocks
