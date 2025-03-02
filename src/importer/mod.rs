@@ -4,8 +4,14 @@
 /// This module contains defined errors which may occur during the import process.
 pub mod errors;
 
+/// This module contains functions for importing Cantara Structured Song (cssf) files
+pub mod cssf;
+
 /// This module contains functions for importing classic song files.
 pub mod classic_song;
+
+/// Meta data helping functions
+pub mod metadata;
 
 use errors::CantaraFileDoesNotExistError;
 use serde::{Deserialize, Serialize};
