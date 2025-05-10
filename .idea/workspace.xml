@@ -7,9 +7,7 @@
     <cargoProject FILE="$PROJECT_DIR$/Cargo.toml" />
   </component>
   <component name="ChangeListManager">
-    <list default="true" id="8beced57-ba15-4023-9c7a-4f9a730767cb" name="Changes" comment="Refactor PresentationSettings into SlideSettings">
-      <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
-    </list>
+    <list default="true" id="8beced57-ba15-4023-9c7a-4f9a730767cb" name="Changes" comment="Refactor PresentationSettings into SlideSettings" />
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
     <option name="HIGHLIGHT_NON_ACTIVE_CHANGELIST" value="false" />
@@ -195,6 +193,7 @@
       <workItem from="1736961010553" duration="1346000" />
       <workItem from="1737210971762" duration="1811000" />
       <workItem from="1737305175562" duration="749000" />
+      <workItem from="1742314465766" duration="44000" />
     </task>
     <task id="LOCAL-00001" summary="Implement Order Creation">
       <option name="closed" value="true" />

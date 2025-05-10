@@ -1,7 +1,7 @@
 //! Here the logic for the slides is implemented
 
-use std::cmp::{min};
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
+use std::cmp::min;
 
 use crate::importer::SongFile;
 use crate::song::Song;
@@ -19,7 +19,7 @@ impl PresentationChapter {
     pub fn new(slides: Vec<Slide>, linked_entity: LinkedEntity) -> Self {
         PresentationChapter {
             slides,
-            linked_entity
+            linked_entity,
         }
     }
 }
@@ -44,34 +44,39 @@ pub enum SlideContent {
     Empty(EmptySlide),
 }
 
-
 /// A struct which represents a presented slide
 #[derive(Clone, Serialize, Deserialize, PartialEq, Debug)]
 pub struct Slide {
     pub slide_content: SlideContent,
-    pub linked_file: Option<SongFile>
+    pub linked_file: Option<SongFile>,
 }
 
 impl Slide {
     pub fn new_empty_slide(black_background: bool) -> Self {
         Slide {
-            slide_content: SlideContent::Empty(
-                EmptySlide {
-                    black_background,
-                }
-            ),
+            slide_content: SlideContent::Empty(EmptySlide { black_background }),
             linked_file: None,
         }
     }
 
-    pub fn new_content_slide(main_text: String, spoiler_text: Option<String>, meta_text: Option<String>) -> Self {
+    pub fn new_content_slide(
+        main_text: String,
+        spoiler_text: Option<String>,
+        meta_text: Option<String>,
+    ) -> Self {
         Slide {
             slide_content: SlideContent::SingleLanguageMainContent(
                 SingleLanguageMainContentSlide::new(
-                    main_text,
-                    spoiler_text,
-                    meta_text
-                )                   
+                    main_text.trim().to_string(),
+                    match spoiler_text {
+                        Some(string) => Some(string.trim().to_string()),
+                        None => None,
+                    },
+                    match meta_text {
+                        Some(string) => Some(string.trim().to_string()),
+                        None => None,
+                    },
+                ),
             ),
             linked_file: None,
         }
@@ -79,12 +84,13 @@ impl Slide {
 
     pub fn new_title_slide(title_text: String, meta_text: Option<String>) -> Self {
         Slide {
-            slide_content: SlideContent::Title(
-                TitleSlide {
-                    title_text,
-                    meta_text
-                }
-            ),
+            slide_content: SlideContent::Title(TitleSlide {
+                title_text: title_text.trim().to_string(),
+                meta_text: match meta_text {
+                    Some(string) => Some(string.trim().to_string()),
+                    None => None,
+                },
+            }),
             linked_file: None,
         }
     }
@@ -98,20 +104,29 @@ impl Slide {
 
     pub fn has_spoiler(&self) -> bool {
         match &self.slide_content {
-            SlideContent::SingleLanguageMainContent(single_language_main_content_slide) => single_language_main_content_slide.spoiler_text.is_some(),
+            SlideContent::SingleLanguageMainContent(single_language_main_content_slide) => {
+                single_language_main_content_slide.spoiler_text.is_some()
+            }
             SlideContent::Title(_) => false,
-            SlideContent::MultiLanguageMainContent(multi_language_main_content_slide) => !multi_language_main_content_slide.spoiler_text_vector.is_empty(),
+            SlideContent::MultiLanguageMainContent(multi_language_main_content_slide) => {
+                !multi_language_main_content_slide
+                    .spoiler_text_vector
+                    .is_empty()
+            }
             SlideContent::SimplePicture(_) => false,
             SlideContent::Empty(_) => false,
         }
     }
 
-
     pub fn has_meta_text(&self) -> bool {
         match &self.slide_content {
-            SlideContent::SingleLanguageMainContent(single_language_main_content_slide) => single_language_main_content_slide.meta_text.is_some(),
+            SlideContent::SingleLanguageMainContent(single_language_main_content_slide) => {
+                single_language_main_content_slide.meta_text.is_some()
+            }
             SlideContent::Title(title_slide) => title_slide.meta_text.is_some(),
-            SlideContent::MultiLanguageMainContent(multi_language_main_content_slide) => multi_language_main_content_slide.meta_text.is_some(),
+            SlideContent::MultiLanguageMainContent(multi_language_main_content_slide) => {
+                multi_language_main_content_slide.meta_text.is_some()
+            }
             SlideContent::SimplePicture(_) => false,
             SlideContent::Empty(_) => false,
         }
@@ -135,14 +150,14 @@ impl SingleLanguageMainContentSlide {
         let parsed_spoiler_text: Option<String> = match spoiler_text {
             Some(str) => match str.trim() {
                 "" => None,
-                _ => Some(str)
+                _ => Some(str),
             },
             None => None,
         };
         let parsed_meta_text: Option<String> = match meta_text {
             Some(str) => match str.trim() {
                 "" => None,
-                _ => Some(str)
+                _ => Some(str),
             },
             None => None,
         };
@@ -150,7 +165,7 @@ impl SingleLanguageMainContentSlide {
         SingleLanguageMainContentSlide {
             main_text,
             spoiler_text: parsed_spoiler_text,
-            meta_text: parsed_meta_text
+            meta_text: parsed_meta_text,
         }
     }
 
@@ -167,7 +182,7 @@ impl SingleLanguageMainContentSlide {
 pub struct MultiLanguageMainContentSlide {
     pub main_text_list: Vec<String>,
     pub spoiler_text_vector: Vec<String>,
-    pub meta_text: Option<String>
+    pub meta_text: Option<String>,
 }
 
 /// An empty slide which no text content to be displayed
@@ -190,7 +205,6 @@ pub struct SimplePictureSlide {
     picture_path: String,
 }
 
-
 /// Struct for specifying the settings for creating presentation slides.
 /// Importers or slide creators may use this as a generic way to specify the parameters for the slide creation process.
 /// Not all settings have to be used by every importer or slide creator.
@@ -211,12 +225,12 @@ pub struct SlideSettings {
 
 impl SlideSettings {
     pub fn default() -> Self {
-        SlideSettings { 
-            title_slide: true, 
+        SlideSettings {
+            title_slide: true,
             meta_syntax: "".to_string(),
             show_meta_information: ShowMetaInformation::FirstSlideAndLastSlide,
-            empty_last_slide: true, 
-            show_spoiler: true ,
+            empty_last_slide: true,
+            show_spoiler: true,
             max_lines: None,
         }
     }
@@ -231,7 +245,7 @@ pub enum ShowMetaInformation {
     /// Show the meta information at the last slide of a song (apart from an empty slide)
     LastSlide,
     /// Show the meta information on both the first and the last slide of a song
-    FirstSlideAndLastSlide
+    FirstSlideAndLastSlide,
 }
 
 impl ShowMetaInformation {
@@ -241,7 +255,7 @@ impl ShowMetaInformation {
             _ => false,
         }
     }
-    
+
     pub fn on_last_slide(&self) -> bool {
         match self {
             ShowMetaInformation::LastSlide | ShowMetaInformation::FirstSlideAndLastSlide => true,
@@ -261,7 +275,11 @@ impl ShowMetaInformation {
 /// Panics if secondary_block is Some(s) but s.len() != primary_block.len()
 /// # Returns
 /// The modified blocks as `Vec<Vec<Vec<String>>>`
-pub fn wrap_blocks(blocks: &Vec<Vec<Vec<String>>>, maximum_lines: usize, persistence: bool) -> Vec<Vec<Vec<String>>>{
+pub fn wrap_blocks(
+    blocks: &Vec<Vec<Vec<String>>>,
+    maximum_lines: usize,
+    persistence: bool,
+) -> Vec<Vec<Vec<String>>> {
     if blocks.is_empty() {
         return blocks.clone();
     }
@@ -280,25 +298,25 @@ pub fn wrap_blocks(blocks: &Vec<Vec<Vec<String>>>, maximum_lines: usize, persist
     let mut block_index: usize = 0;
     while block_index < wrapped_blocks[0].len() {
         if wrapped_blocks[0][block_index].len() > maximum_lines {
-            let splitter = min(maximum_lines-1, wrapped_blocks[0][block_index].len()/2);
+            let splitter = min(maximum_lines - 1, wrapped_blocks[0][block_index].len() / 2);
             let line_index = splitter;
 
-            if wrapped_blocks[0].get(block_index +1).is_none() || persistence {
+            if wrapped_blocks[0].get(block_index + 1).is_none() || persistence {
                 wrapped_blocks
                     .iter_mut()
-                    .for_each(|block| {block.insert(block_index+1, vec![])})
+                    .for_each(|block| block.insert(block_index + 1, vec![]))
             }
-            
+
             let mut moved_line_count = 0;
             while line_index < wrapped_blocks[0][block_index].len() {
                 let primary_line = wrapped_blocks[0][block_index].remove(line_index);
-                wrapped_blocks[0][block_index+1].insert(moved_line_count, primary_line);
+                wrapped_blocks[0][block_index + 1].insert(moved_line_count, primary_line);
 
                 // Here the other blocks will be moved as well if they are available
                 for block in wrapped_blocks.iter_mut().skip(1) {
                     if line_index < block[block_index].len() {
                         let primary_line = block[block_index].remove(line_index);
-                        block[block_index+1].insert(moved_line_count, primary_line);
+                        block[block_index + 1].insert(moved_line_count, primary_line);
                     }
                 }
                 moved_line_count += 1;
@@ -324,7 +342,11 @@ mod tests {
         let slide_1 = Slide::new_content_slide("Test".to_string(), Some("Hallo".to_string()), None);
         assert!(slide_1.has_spoiler());
 
-        let slide_2 = Slide::new_content_slide("Test".to_string(), Some("".to_string()), Some("".to_string()));
+        let slide_2 = Slide::new_content_slide(
+            "Test".to_string(),
+            Some("".to_string()),
+            Some("".to_string()),
+        );
         assert!(!slide_2.has_spoiler());
     }
 
@@ -332,12 +354,35 @@ mod tests {
     fn test_wrap_blocks_function() {
         let example_blocks = vec![
             vec![
-                vec!["A1".to_string(), "A2".to_string(), "A3".to_string(), "A4".to_string(), "A5".to_string()],
-                vec!["A6".to_string(), "A7".to_string(), "A8".to_string(), "A9".to_string(), "A10".to_string()],
+                vec![
+                    "A1".to_string(),
+                    "A2".to_string(),
+                    "A3".to_string(),
+                    "A4".to_string(),
+                    "A5".to_string(),
+                ],
+                vec![
+                    "A6".to_string(),
+                    "A7".to_string(),
+                    "A8".to_string(),
+                    "A9".to_string(),
+                    "A10".to_string(),
+                ],
             ],
             vec![
-                vec!["B1".to_string(), "B2".to_string(), "B3".to_string(), "B4".to_string()],
-                vec!["B5".to_string(), "B6".to_string(), "B7".to_string(), "B8".to_string(), "B9".to_string()],
+                vec![
+                    "B1".to_string(),
+                    "B2".to_string(),
+                    "B3".to_string(),
+                    "B4".to_string(),
+                ],
+                vec![
+                    "B5".to_string(),
+                    "B6".to_string(),
+                    "B7".to_string(),
+                    "B8".to_string(),
+                    "B9".to_string(),
+                ],
             ],
         ];
 
