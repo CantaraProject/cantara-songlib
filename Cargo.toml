@@ -1,11 +1,12 @@
 [package]
 name = "cantara-songlib"
 authors = ["Jan Martin Reckel jm.reckel@t-online.de"]
-description = "Functionalities to import, manage and export songs in various formats"
+description = "Software for Song Presentation in Churches"
 keywords = ["music", "sheets", "presentation"]
 license = "GPL-3.0"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
+repository = "https://github.com/CantaraProject/cantara-songlib"
 
 [lib]
 crate-type = ["staticlib", "cdylib", "rlib"]
