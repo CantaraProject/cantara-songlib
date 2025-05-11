@@ -4,7 +4,7 @@ authors = ["Jan Martin Reckel jm.reckel@t-online.de"]
 description = "Software for Song Presentation in Churches"
 keywords = ["music", "sheets", "presentation"]
 license = "GPL-3.0"
-version = "0.1.1"
+version = "0.1.2"
 edition = "2021"
 repository = "https://github.com/CantaraProject/cantara-songlib"
 

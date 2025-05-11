@@ -100,7 +100,7 @@ dependencies = [
 
 [[package]]
 name = "cantara-songlib"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "cbindgen",
  "clap 4.5.17",

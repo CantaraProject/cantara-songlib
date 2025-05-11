@@ -229,8 +229,8 @@ pub struct SlideSettings {
     pub max_lines: Option<usize>,
 }
 
-impl SlideSettings {
-    pub fn default() -> Self {
+impl Default for SlideSettings {
+    fn default() -> Self {
         SlideSettings {
             title_slide: true,
             meta_syntax: "".to_string(),
