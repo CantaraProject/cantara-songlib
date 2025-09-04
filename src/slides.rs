@@ -322,7 +322,8 @@ pub fn wrap_blocks(
             } else if total_lines % 2 == 0 {
                 min(maximum_lines, total_lines / 2)
             } else {
-                min(maximum_lines - 1, (total_lines + 1) / 2)
+                // Prefer larger first part on odd totals (e.g., 5 -> 3|2), but never exceed maximum_lines
+                min(maximum_lines, (total_lines + 1) / 2)
             };
 
             // Determine whether we should insert a new block placeholder after the current one
@@ -458,14 +459,13 @@ mod tests {
         // Maximum lines is set to 3, which is less than the 5 lines in our block, so it should trigger splitting
         let wrapped_blocks = wrap_blocks(&blocks_with_odd_lines, 3, true);
         
-        // For 5 lines with maximum_lines=3, the min function limits the splitter to maximum_lines-1 = 2
-        // So it should split as 2 and 3
-        assert_eq!(wrapped_blocks[0][0].len(), 2); // First part has min(maximum_lines-1, (total_lines+1)/2) = min(2, 3) = 2 lines
-        assert_eq!(wrapped_blocks[0][1].len(), 3); // Second part has the remaining 3 lines
+        // For 5 lines with maximum_lines=3, we prefer a 3 | 2 split (larger first part)
+        assert_eq!(wrapped_blocks[0][0].len(), 3);
+        assert_eq!(wrapped_blocks[0][1].len(), 2);
         
         // Verify the actual content
-        assert_eq!(wrapped_blocks[0][0], vec!["L1".to_string(), "L2".to_string()]);
-        assert_eq!(wrapped_blocks[0][1], vec!["L3".to_string(), "L4".to_string(), "L5".to_string()]);
+        assert_eq!(wrapped_blocks[0][0], vec!["L1".to_string(), "L2".to_string(), "L3".to_string()]);
+        assert_eq!(wrapped_blocks[0][1], vec!["L4".to_string(), "L5".to_string()]);
     }
     
     #[test]
