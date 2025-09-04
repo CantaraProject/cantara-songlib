@@ -4,7 +4,7 @@ authors = ["Jan Martin Reckel jm.reckel@t-online.de"]
 description = "Functionalities to import, manage and export songs in various formats"
 keywords = ["music", "sheets", "presentation"]
 license = "GPL-3.0"
-version = "0.1.3"
+version = "0.1.4"
 edition = "2021"
 repository = "https://github.com/CantaraProject/cantara-songlib"
 

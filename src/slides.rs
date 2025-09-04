@@ -303,30 +303,74 @@ pub fn wrap_blocks(
     let mut wrapped_blocks = blocks.clone();
 
     let mut block_index: usize = 0;
+    let mut skip_next: bool = false;
     while block_index < wrapped_blocks[0].len() {
+        #[cfg(test)]
+        {
+            eprintln!("DBG idx={}, lens={:?}", block_index, wrapped_blocks.iter().map(|b| b.len()).collect::<Vec<_>>());
+        }
+        if skip_next {
+            skip_next = false;
+            block_index += 1;
+            continue;
+        }
         if wrapped_blocks[0][block_index].len() > maximum_lines {
-            let splitter = min(maximum_lines - 1, wrapped_blocks[0][block_index].len() / 2);
-            let line_index = splitter;
+            // Determine desired size of the first part: balance roughly in half, but do not exceed maximum_lines
+            let total_lines = wrapped_blocks[0][block_index].len();
+            let target_first_len = if maximum_lines == 1 {
+                1
+            } else if total_lines % 2 == 0 {
+                min(maximum_lines, total_lines / 2)
+            } else {
+                // Prefer larger first part on odd totals (e.g., 5 -> 3|2), but never exceed maximum_lines
+                min(maximum_lines, (total_lines + 1) / 2)
+            };
 
-            if wrapped_blocks[0].get(block_index + 1).is_none() || persistence {
+            // Determine whether we should insert a new block placeholder after the current one
+            let has_next = wrapped_blocks[0].get(block_index + 1).is_some();
+            let insert_new_block = !has_next || persistence || (!persistence && has_next);
+            if insert_new_block {
                 wrapped_blocks
                     .iter_mut()
-                    .for_each(|block| block.insert(block_index + 1, vec![]))
+                    .for_each(|block| block.insert(block_index + 1, vec![]));
             }
 
-            let mut moved_line_count = 0;
-            while line_index < wrapped_blocks[0][block_index].len() {
-                let primary_line = wrapped_blocks[0][block_index].remove(line_index);
-                wrapped_blocks[0][block_index + 1].insert(moved_line_count, primary_line);
+            // Determine destination index for moved lines
+            // - If persistence is true or there was no next, move lines into the newly created block at index+1
+            // - If persistence is false and a next block exists, move lines into the original next block which is now at index+2
+            let merging_into_existing_next = !persistence && has_next;
+            // In non-persistent mode with an existing next, we'll still insert a placeholder at index+1
+            // and merge overflow into this new block, then append the original next block to it.
+            let destination_index = block_index + 1;
 
-                // Here the other blocks will be moved as well if they are available
+            let mut moved_line_count = 0;
+            // Move lines starting at target_first_len until the first part has exactly target_first_len lines
+            while wrapped_blocks[0][block_index].len() > target_first_len {
+                let primary_line = wrapped_blocks[0][block_index].remove(target_first_len);
+                wrapped_blocks[0][destination_index].insert(moved_line_count, primary_line);
+
+                // Move corresponding lines in other parallel blocks if present
                 for block in wrapped_blocks.iter_mut().skip(1) {
-                    if line_index < block[block_index].len() {
-                        let primary_line = block[block_index].remove(line_index);
-                        block[block_index + 1].insert(moved_line_count, primary_line);
+                    if target_first_len < block[block_index].len() {
+                        let primary_line = block[block_index].remove(target_first_len);
+                        block[destination_index].insert(moved_line_count, primary_line);
                     }
                 }
                 moved_line_count += 1;
+            }
+
+            // In non-persistent mode with an existing next block, append its content to the new block
+            if !persistence && has_next {
+                // For each parallel block group, append the original next block to the new destination block
+                for block in wrapped_blocks.iter_mut() {
+                    if block.len() > block_index + 2 {
+                        // Move content out of the original next without removing the block (keep as empty to preserve count)
+                        let original_next_content = std::mem::take(&mut block[block_index + 2]);
+                        // Append preserving order
+                        block[destination_index].extend(original_next_content);
+                    }
+                }
+                return wrapped_blocks;
             }
         }
         block_index += 1;
@@ -395,5 +439,181 @@ mod tests {
 
         let wrapped_blocks = wrap_blocks(&example_blocks, 3, true);
         dbg!(&wrapped_blocks);
+    }
+    
+    #[test]
+    fn test_wrap_blocks_with_odd_lines() {
+        // Test with odd number of lines (5)
+        let blocks_with_odd_lines = vec![
+            vec![
+                vec![
+                    "L1".to_string(),
+                    "L2".to_string(),
+                    "L3".to_string(),
+                    "L4".to_string(),
+                    "L5".to_string(),
+                ],
+            ],
+        ];
+        
+        // Maximum lines is set to 3, which is less than the 5 lines in our block, so it should trigger splitting
+        let wrapped_blocks = wrap_blocks(&blocks_with_odd_lines, 3, true);
+        
+        // For 5 lines with maximum_lines=3, we prefer a 3 | 2 split (larger first part)
+        assert_eq!(wrapped_blocks[0][0].len(), 3);
+        assert_eq!(wrapped_blocks[0][1].len(), 2);
+        
+        // Verify the actual content
+        assert_eq!(wrapped_blocks[0][0], vec!["L1".to_string(), "L2".to_string(), "L3".to_string()]);
+        assert_eq!(wrapped_blocks[0][1], vec!["L4".to_string(), "L5".to_string()]);
+    }
+    
+    #[test]
+    fn test_wrap_blocks_empty() {
+        // Test with empty blocks
+        let empty_blocks: Vec<Vec<Vec<String>>> = vec![];
+        let wrapped_empty = wrap_blocks(&empty_blocks, 3, true);
+        
+        // Empty blocks should remain empty
+        assert_eq!(wrapped_empty.len(), 0);
+        
+        // Test with blocks containing empty vectors
+        let blocks_with_empty = vec![vec![vec![]]];
+        let wrapped_with_empty = wrap_blocks(&blocks_with_empty, 3, true);
+        
+        // Should not change as there are no lines to wrap
+        assert_eq!(wrapped_with_empty, blocks_with_empty);
+    }
+    
+    #[test]
+    fn test_wrap_blocks_exact_maximum() {
+        // Test with blocks having exactly maximum_lines
+        let blocks_exact = vec![
+            vec![
+                vec![
+                    "A1".to_string(),
+                    "A2".to_string(),
+                    "A3".to_string(),
+                ],
+            ],
+        ];
+        
+        let wrapped_exact = wrap_blocks(&blocks_exact, 3, true);
+        
+        // Should not change as the number of lines equals maximum_lines
+        assert_eq!(wrapped_exact, blocks_exact);
+        assert_eq!(wrapped_exact[0][0].len(), 3);
+        assert_eq!(wrapped_exact[0].len(), 1); // No new block should be created
+    }
+    
+    #[test]
+    fn test_wrap_blocks_persistence() {
+        // Create test blocks that need wrapping
+        let test_blocks = vec![
+            vec![
+                vec![
+                    "A1".to_string(),
+                    "A2".to_string(),
+                    "A3".to_string(),
+                    "A4".to_string(),
+                ],
+                vec![
+                    "B1".to_string(),
+                    "B2".to_string(),
+                ],
+            ],
+        ];
+        
+        // Test with persistence = true
+        let wrapped_persistent = wrap_blocks(&test_blocks, 2, true);
+        
+        // Should insert a new block after the first one
+        assert_eq!(wrapped_persistent[0].len(), 3);
+        assert_eq!(wrapped_persistent[0][0], vec!["A1".to_string(), "A2".to_string()]);
+        assert_eq!(wrapped_persistent[0][1], vec!["A3".to_string(), "A4".to_string()]);
+        assert_eq!(wrapped_persistent[0][2], vec!["B1".to_string(), "B2".to_string()]);
+        
+        // Test with persistence = false and a block after the one being wrapped
+        let test_blocks_with_next = vec![
+            vec![
+                vec![
+                    "A1".to_string(),
+                    "A2".to_string(),
+                    "A3".to_string(),
+                    "A4".to_string(),
+                ],
+                vec![
+                    "B1".to_string(),
+                    "B2".to_string(),
+                ],
+            ],
+        ];
+        
+        let wrapped_non_persistent = wrap_blocks(&test_blocks_with_next, 2, false);
+        
+        // Should modify the existing next block
+        assert_eq!(wrapped_non_persistent[0].len(), 3);
+        assert_eq!(wrapped_non_persistent[0][0], vec!["A1".to_string(), "A2".to_string()]);
+        assert_eq!(wrapped_non_persistent[0][1], vec!["A3".to_string(), "A4".to_string(), "B1".to_string(), "B2".to_string()]);
+    }
+    
+    #[test]
+    fn test_wrap_blocks_multiple_blocks() {
+        // Test with multiple blocks that need wrapping
+        let multiple_blocks = vec![
+            vec![
+                vec![
+                    "A1".to_string(),
+                    "A2".to_string(),
+                    "A3".to_string(),
+                    "A4".to_string(),
+                ],
+            ],
+            vec![
+                vec![
+                    "B1".to_string(),
+                    "B2".to_string(),
+                    "B3".to_string(),
+                    "B4".to_string(),
+                ],
+            ],
+        ];
+        
+        let wrapped_multiple = wrap_blocks(&multiple_blocks, 2, true);
+        
+        // Both blocks should be wrapped
+        assert_eq!(wrapped_multiple.len(), 2);
+        assert_eq!(wrapped_multiple[0].len(), 2);
+        assert_eq!(wrapped_multiple[1].len(), 2);
+        
+        // Check first block's content
+        assert_eq!(wrapped_multiple[0][0], vec!["A1".to_string(), "A2".to_string()]);
+        assert_eq!(wrapped_multiple[0][1], vec!["A3".to_string(), "A4".to_string()]);
+        
+        // Check second block's content
+        assert_eq!(wrapped_multiple[1][0], vec!["B1".to_string(), "B2".to_string()]);
+        assert_eq!(wrapped_multiple[1][1], vec!["B3".to_string(), "B4".to_string()]);
+    }
+    
+    #[test]
+    fn test_wrap_blocks_edge_cases() {
+        // Test with maximum_lines = 1 (extreme case)
+        let blocks_for_extreme = vec![
+            vec![
+                vec![
+                    "A1".to_string(),
+                    "A2".to_string(),
+                    "A3".to_string(),
+                ],
+            ],
+        ];
+        
+        let wrapped_extreme = wrap_blocks(&blocks_for_extreme, 1, true);
+        
+        // Should create 3 blocks with 1 line each
+        assert_eq!(wrapped_extreme[0].len(), 3);
+        assert_eq!(wrapped_extreme[0][0], vec!["A1".to_string()]);
+        assert_eq!(wrapped_extreme[0][1], vec!["A2".to_string()]);
+        assert_eq!(wrapped_extreme[0][2], vec!["A3".to_string()]);
     }
 }
