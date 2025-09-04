@@ -305,8 +305,9 @@ pub fn wrap_blocks(
     let mut block_index: usize = 0;
     while block_index < wrapped_blocks[0].len() {
         if wrapped_blocks[0][block_index].len() > maximum_lines {
-            let splitter = min(maximum_lines - 1, wrapped_blocks[0][block_index].len() / 2);
-            let line_index = splitter;
+            // Calculate split point: for odd n, use (n+1)/2 and (n-1)/2
+            let total_lines = wrapped_blocks[0][block_index].len();
+            let splitter = min(maximum_lines - 1, (total_lines + 1) / 2);
 
             if wrapped_blocks[0].get(block_index + 1).is_none() || persistence {
                 wrapped_blocks
@@ -315,14 +316,16 @@ pub fn wrap_blocks(
             }
 
             let mut moved_line_count = 0;
-            while line_index < wrapped_blocks[0][block_index].len() {
-                let primary_line = wrapped_blocks[0][block_index].remove(line_index);
+            // Use splitter as the starting point for moving lines
+            // As we remove lines, the array shrinks, so we always remove from the same index
+            while splitter < wrapped_blocks[0][block_index].len() {
+                let primary_line = wrapped_blocks[0][block_index].remove(splitter);
                 wrapped_blocks[0][block_index + 1].insert(moved_line_count, primary_line);
 
                 // Here the other blocks will be moved as well if they are available
                 for block in wrapped_blocks.iter_mut().skip(1) {
-                    if line_index < block[block_index].len() {
-                        let primary_line = block[block_index].remove(line_index);
+                    if splitter < block[block_index].len() {
+                        let primary_line = block[block_index].remove(splitter);
                         block[block_index + 1].insert(moved_line_count, primary_line);
                     }
                 }
@@ -395,5 +398,33 @@ mod tests {
 
         let wrapped_blocks = wrap_blocks(&example_blocks, 3, true);
         dbg!(&wrapped_blocks);
+    }
+    
+    #[test]
+    fn test_wrap_blocks_with_odd_lines() {
+        // Test with odd number of lines (5)
+        let blocks_with_odd_lines = vec![
+            vec![
+                vec![
+                    "L1".to_string(),
+                    "L2".to_string(),
+                    "L3".to_string(),
+                    "L4".to_string(),
+                    "L5".to_string(),
+                ],
+            ],
+        ];
+        
+        // Maximum lines is set to 3, which is less than the 5 lines in our block, so it should trigger splitting
+        let wrapped_blocks = wrap_blocks(&blocks_with_odd_lines, 3, true);
+        
+        // For 5 lines with maximum_lines=3, the min function limits the splitter to maximum_lines-1 = 2
+        // So it should split as 2 and 3
+        assert_eq!(wrapped_blocks[0][0].len(), 2); // First part has min(maximum_lines-1, (total_lines+1)/2) = min(2, 3) = 2 lines
+        assert_eq!(wrapped_blocks[0][1].len(), 3); // Second part has the remaining 3 lines
+        
+        // Verify the actual content
+        assert_eq!(wrapped_blocks[0][0], vec!["L1".to_string(), "L2".to_string()]);
+        assert_eq!(wrapped_blocks[0][1], vec!["L3".to_string(), "L4".to_string(), "L5".to_string()]);
     }
 }
