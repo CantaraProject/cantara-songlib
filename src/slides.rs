@@ -315,16 +315,9 @@ pub fn wrap_blocks(
             continue;
         }
         if wrapped_blocks[0][block_index].len() > maximum_lines {
-            // Determine desired size of the first part: balance roughly in half, but do not exceed maximum_lines
+            // Determine the desired size of the first part: balance roughly in half, but do not exceed maximum_lines
             let total_lines = wrapped_blocks[0][block_index].len();
-            let target_first_len = if maximum_lines == 1 {
-                1
-            } else if total_lines % 2 == 0 {
-                min(maximum_lines, total_lines / 2)
-            } else {
-                // Prefer larger first part on odd totals (e.g., 5 -> 3|2), but never exceed maximum_lines
-                min(maximum_lines, (total_lines + 1) / 2)
-            };
+            let target_first_len = maximum_lines;
 
             // Determine whether we should insert a new block placeholder after the current one
             let has_next = wrapped_blocks[0].get(block_index + 1).is_some();
