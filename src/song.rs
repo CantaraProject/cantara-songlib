@@ -9,9 +9,16 @@ use serde::{Deserialize, Serialize};
 /// Object which represents a song in Cantara
 #[derive(Clone, Serialize, Deserialize, PartialEq, Debug)]
 pub struct Song {
+    /// The title of the song
     pub title: String,
+
+    /// A list of tags which can be used to categorize the song
     tags: HashMap<String, String>,
+
+    /// A list of all song parts (without any information about the song order)
     parts: Vec<Rc<RefCell<SongPart>>>,
+
+    /// A list of all song orders (with references to the parts)
     pub part_orders: Vec<PartOrder>,
 }
 
