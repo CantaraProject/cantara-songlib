@@ -713,6 +713,7 @@ pub enum PartOrderRule {
     /// In this rule, only one refrain and one bridge are allowed.
     /// Use Custom for more complex song structures.
     VerseRefrainBridgeRefrain,
+
     /// This represents a song which begins with a refrain followed by the stanza. The refrain is repeated after each verse.
     /// Before the last refrain, a bridge is played.
     /// However, a bridges is not necessary to be part of the song.
@@ -720,6 +721,7 @@ pub enum PartOrderRule {
     /// In this rule, only one refrain and one bridge are allowed.
     /// Use Custom for more complex song structures.
     RefrainVerseBridgeRefrain,
+
     /// Any song structure which is more complex than the other rules.
     /// In that case, you need to define the order of the parts manually.
     Custom(Vec<Rc<RefCell<SongPart>>>),
