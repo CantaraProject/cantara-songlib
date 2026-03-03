@@ -233,7 +233,7 @@ fn find_lyrics(part: &SongPart) -> Option<&SongPartContent> {
 fn ensure_final_bar(content: &str) -> String {
     let trimmed = content.trim_end();
     if trimmed.ends_with("\\bar \"|.\"") {
-        content.to_string()
+        trimmed.to_string()
     } else {
         format!("{} \\bar \"|.\"", trimmed)
     }
