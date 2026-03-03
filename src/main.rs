@@ -1,6 +1,7 @@
 //! This crate also provides a very small wrapper cli for directly converting and parsing song files.
 
 use cantara_songlib::exporter;
+use cantara_songlib::exporter::lilypond::LilypondSettings;
 use cantara_songlib::importer::classic_song::slides_from_classic_song;
 use cantara_songlib::importer::song_yml;
 use cantara_songlib::slides::{LanguageConfiguration, SlideSettings};
@@ -35,7 +36,15 @@ enum Commands {
     },
 
     /// Generates a LilyPond (.ly) music sheet file
-    Lilypond,
+    Lilypond {
+        /// Paper size for the output (default: "a4")
+        #[arg(short, long, default_value = "a4")]
+        paper_size: String,
+
+        /// Layout indent setting (default: "#0")
+        #[arg(short, long, default_value = "#0")]
+        indent: String,
+    },
 }
 
 /// Import a Song from the given file path.
@@ -113,9 +122,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
 
-        Commands::Lilypond => {
+        Commands::Lilypond {
+            paper_size,
+            indent,
+        } => {
             let song = import_song(&file)?;
-            match exporter::lilypond::lilypond_from_song(&song) {
+            let settings = LilypondSettings {
+                paper_size: paper_size.clone(),
+                layout_indent: indent.clone(),
+            };
+            match exporter::lilypond::lilypond_from_song(&song, &settings) {
                 Ok(ly_output) => println!("{}", ly_output),
                 Err(e) => return Err(e.into()),
             }
