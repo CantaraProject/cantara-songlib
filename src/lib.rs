@@ -18,7 +18,7 @@ At the moment, the following import formats are supported:
 
 use importer::classic_song::slides_from_classic_song;
 use importer::errors::*;
-use slides::{ShowMetaInformation, Slide, SlideSettings};
+use slides::{LanguageConfiguration, ShowMetaInformation, Slide, SlideSettings};
 use std::error::Error;
 use std::ffi::{c_char, c_int, CStr, CString};
 use std::path::PathBuf;
@@ -99,7 +99,8 @@ pub extern "C" fn create_presentation_from_file_c(
         show_meta_information,
         meta_syntax,
         empty_last_slide,
-        max_lines
+        max_lines,
+        language: LanguageConfiguration::default(),
     };
     
     match create_presentation_from_file(file_path, slide_settings) {

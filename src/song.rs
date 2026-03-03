@@ -298,6 +298,25 @@ impl Song {
         );
     }
 
+    /// Get all distinct languages available in this song's lyrics.
+    /// Returns language codes from `LyricLanguage::Specific` entries.
+    /// `LyricLanguage::Default` entries are not included — use `default_language` for those.
+    pub fn get_available_languages(&self) -> Vec<String> {
+        let mut languages: Vec<String> = Vec::new();
+        for part in &self.parts {
+            for content in &part.borrow().contents {
+                if let SongPartContentType::Lyrics { language } = &content.voice_type {
+                    if let LyricLanguage::Specific(lang) = language {
+                        if !languages.contains(lang) {
+                            languages.push(lang.clone());
+                        }
+                    }
+                }
+            }
+        }
+        languages
+    }
+
     /// Get a reference to the tags HashMap
     pub fn get_tags(&self) -> &HashMap<String, String> {
         &self.tags
