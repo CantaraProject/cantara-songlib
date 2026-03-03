@@ -10,6 +10,9 @@ pub mod cssf;
 /// This module contains functions for importing classic song files.
 pub mod classic_song;
 
+/// This module contains functions for importing YAML-based song files (.song.yml)
+pub mod song_yml;
+
 /// Meta data helping functions
 pub mod metadata;
 
@@ -91,10 +94,18 @@ pub fn import_song_from_file(file_path: &str) -> Result<Song, Box<dyn Error>> {
     }
     let content: String = content_wraped.unwrap();
 
+    // Check for double extension .song.yml first
+    let is_song_yml = file_path.ends_with(".song.yml") || file_path.ends_with(".song.yaml");
+
     let file_extension: &str = Path::new(file_path)
         .extension()
         .and_then(OsStr::to_str)
         .unwrap();
+
+    if is_song_yml || file_extension == "yml" || file_extension == "yaml" {
+        return song_yml::import_from_yml_string(&content);
+    }
+
     match file_extension {
         "song" => {
             let wraped_song: Result<Song, Box<dyn Error>> = classic_song::import_song(&content);

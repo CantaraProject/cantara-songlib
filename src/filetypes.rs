@@ -2,6 +2,7 @@
 pub enum FileType {
     ClassicSongFile,
     CSSF,
+    SongYaml,
     CCLISongselectFile,
 }
 
@@ -9,6 +10,7 @@ pub fn contains_song_structure(file_type: FileType) -> bool {
     match file_type {
         FileType::ClassicSongFile => false,
         FileType::CSSF => true,
+        FileType::SongYaml => true,
         FileType::CCLISongselectFile => true,
     }
 }
@@ -17,6 +19,7 @@ pub fn conatains_presentation_order(file_type: FileType) -> bool {
     match file_type {
         FileType::ClassicSongFile => true,
         FileType::CSSF => true,
+        FileType::SongYaml => false,
         FileType::CCLISongselectFile => false,
     }
 }
@@ -25,6 +28,7 @@ pub fn get_file_type_by_file_ending(ending: &str) -> Option<FileType> {
     match ending {
         ".cssf" => Some(FileType::CSSF),
         ".song" => Some(FileType::ClassicSongFile),
+        ".song.yml" => Some(FileType::SongYaml),
         ".ccli" => Some(FileType::CCLISongselectFile),
         _ => None,
     }
@@ -39,5 +43,6 @@ mod tests {
         assert!(contains_song_structure(FileType::CCLISongselectFile));
         assert!(!contains_song_structure(FileType::ClassicSongFile));
         assert!(contains_song_structure(FileType::CSSF));
+        assert!(contains_song_structure(FileType::SongYaml));
     }
 }

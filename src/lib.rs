@@ -18,7 +18,7 @@ At the moment, the following import formats are supported:
 
 use importer::classic_song::slides_from_classic_song;
 use importer::errors::*;
-use slides::{ShowMetaInformation, Slide, SlideSettings};
+use slides::{LanguageConfiguration, ShowMetaInformation, Slide, SlideSettings};
 use std::error::Error;
 use std::ffi::{c_char, c_int, CStr, CString};
 use std::path::PathBuf;
@@ -38,6 +38,9 @@ pub mod slides;
 
 /// Templates which define the creation of slides and the insertion of data
 pub mod templating;
+
+/// The exporter module contains functions for exporting songs to different output formats (slides, LilyPond, etc.)
+pub mod exporter;
 
 /// Extern library call function for creating a presentation from a given input file
 /// 
@@ -96,7 +99,8 @@ pub extern "C" fn create_presentation_from_file_c(
         show_meta_information,
         meta_syntax,
         empty_last_slide,
-        max_lines
+        max_lines,
+        language: LanguageConfiguration::default(),
     };
     
     match create_presentation_from_file(file_path, slide_settings) {
@@ -113,8 +117,20 @@ pub fn create_presentation_from_file(file_path: PathBuf, slide_settings: SlideSe
         )
     }
 
-    if file_path.extension() == Some(std::ffi::OsStr::new("song")) {
+    let path_str = file_path.to_string_lossy();
+    let is_song_yml = path_str.ends_with(".song.yml") || path_str.ends_with(".song.yaml");
+    let ext = file_path.extension().and_then(|e| e.to_str()).unwrap_or("");
 
+    // Handle .song.yml / .yml / .yaml files via Song-based pipeline
+    if is_song_yml || ext == "yml" || ext == "yaml" {
+        let file_content = std::fs::read_to_string(&file_path)?;
+        let song = importer::song_yml::import_from_yml_string(&file_content)?;
+        let slides = exporter::slides::slides_from_song(&song, &slide_settings);
+        return Ok(slides);
+    }
+
+    // Handle classic .song files
+    if ext == "song" {
         let file_content = std::fs::read_to_string(&file_path).unwrap();
         let slides = slides_from_classic_song(
             &file_content,
@@ -128,7 +144,7 @@ pub fn create_presentation_from_file(file_path: PathBuf, slide_settings: SlideSe
     Err(
         Box::new(
             CantaraImportUnknownFileExtensionError {
-                file_extension: "unknown".to_string()
+                file_extension: ext.to_string()
             }
         )
     )

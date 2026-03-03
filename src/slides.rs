@@ -103,6 +103,33 @@ impl Slide {
                 pdf_path,
                 page_number,
             }),
+    pub fn new_multi_language_content_slide(
+        main_text_list: Vec<String>,
+        spoiler_text_vector: Vec<String>,
+        meta_text: Option<String>,
+    ) -> Self {
+        let trimmed_main: Vec<String> = main_text_list
+            .into_iter()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect();
+        let trimmed_spoiler: Vec<String> = spoiler_text_vector
+            .into_iter()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect();
+        let parsed_meta: Option<String> = match meta_text {
+            Some(s) if !s.trim().is_empty() => Some(s.trim().to_string()),
+            _ => None,
+        };
+        Slide {
+            slide_content: SlideContent::MultiLanguageMainContent(
+                MultiLanguageMainContentSlide {
+                    main_text_list: trimmed_main,
+                    spoiler_text_vector: trimmed_spoiler,
+                    meta_text: parsed_meta,
+                },
+            ),
             linked_file: None,
         }
     }
@@ -226,6 +253,22 @@ pub struct PdfPageSlide {
     pub pdf_path: String,
     /// The page number to display (1-based)
     pub page_number: u32,
+/// Configuration for which language(s) to display on presentation slides
+#[derive(Clone, Serialize, Deserialize, PartialEq, Debug)]
+pub enum LanguageConfiguration {
+    /// Single language mode: display lyrics in one language.
+    /// If `None`, use the song's `default_language` (or fall back to the first available lyrics).
+    SingleLanguage(Option<String>),
+
+    /// Multi-language mode: display lyrics in multiple languages on each slide.
+    /// Languages are shown in the order specified. If the list is empty, all available languages are used.
+    MultiLanguage(Vec<String>),
+}
+
+impl Default for LanguageConfiguration {
+    fn default() -> Self {
+        LanguageConfiguration::SingleLanguage(None)
+    }
 }
 
 /// Struct for specifying the settings for creating presentation slides.
@@ -250,6 +293,9 @@ pub struct SlideSettings {
 
     /// Specifies the maximum amount of lines of each block. If the number is higher, the slides will be wrapped into several ones. In case of `None` this is ignored.
     pub max_lines: Option<usize>,
+
+    /// Specifies which language(s) to display on the slides
+    pub language: LanguageConfiguration,
 }
 
 impl Default for SlideSettings {
@@ -261,6 +307,7 @@ impl Default for SlideSettings {
             empty_last_slide: true,
             show_spoiler: true,
             max_lines: None,
+            language: LanguageConfiguration::default(),
         }
     }
 }

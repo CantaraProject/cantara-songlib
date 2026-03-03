@@ -430,13 +430,14 @@ mod test {
     fn generate_slides() {
         let testfile = std::fs::read_to_string("testfiles/O What A Savior That He Died For Me.song").unwrap();
         
-        let presentation_settings = SlideSettings { 
+        let presentation_settings = SlideSettings {
             title_slide: true,
-            meta_syntax: "{{title}} ({{author}})".to_string(), 
-            show_meta_information: ShowMetaInformation::FirstSlideAndLastSlide, 
-            empty_last_slide: true, 
+            meta_syntax: "{{title}} ({{author}})".to_string(),
+            show_meta_information: ShowMetaInformation::FirstSlideAndLastSlide,
+            empty_last_slide: true,
             show_spoiler: true ,
             max_lines: Some(10),
+            language: crate::slides::LanguageConfiguration::default(),
         };
         
         let slides: Vec<Slide> = slides_from_classic_song(
@@ -454,13 +455,14 @@ mod test {
     fn test_metadata_displayed_correctly() {
         let testfile = std::fs::read_to_string("testfiles/O What A Savior That He Died For Me.song").unwrap();
         
-        let mut presentation_settings   = SlideSettings { 
+        let mut presentation_settings = SlideSettings {
             title_slide: false,
-            meta_syntax: "{{title}} ({{author}})".to_string(), 
+            meta_syntax: "{{title}} ({{author}})".to_string(),
             show_meta_information: ShowMetaInformation::None,
-            empty_last_slide: true, 
+            empty_last_slide: true,
             show_spoiler: true,
             max_lines: None,
+            language: crate::slides::LanguageConfiguration::default(),
         };
 
         let slides: Vec<Slide> = slides_from_classic_song(
