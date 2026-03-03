@@ -12,6 +12,9 @@ pub struct Song {
     /// The title of the song
     pub title: String,
 
+    /// The default language for lyrics (e.g. "en", "de")
+    pub default_language: Option<String>,
+
     /// A list of tags which can be used to categorize the song
     tags: HashMap<String, String>,
 
@@ -27,6 +30,7 @@ impl Song {
     pub fn new(title: &str) -> Song {
         Song {
             title: title.to_string(),
+            default_language: None,
             tags: HashMap::new(),
             parts: Vec::new(),
             part_orders: Vec::new(),
@@ -293,6 +297,33 @@ impl Song {
             PartOrder::from_guess(self)
         );
     }
+
+    /// Get a reference to the tags HashMap
+    pub fn get_tags(&self) -> &HashMap<String, String> {
+        &self.tags
+    }
+
+    /// Get the voice content for a part, walking the is_repetition_of chain if needed.
+    /// Returns None if no voice content is found.
+    pub fn get_voice_for_part(&self, part: &SongPart) -> Option<SongPartContent> {
+        // First check if this part directly has voice content
+        for content in &part.contents {
+            match &content.voice_type {
+                SongPartContentType::LeadVoice
+                | SongPartContentType::SupranoVoice
+                | SongPartContentType::AltoVoice
+                | SongPartContentType::TenorVoice
+                | SongPartContentType::BassVoice => return Some(content.clone()),
+                _ => {}
+            }
+        }
+        // Walk the is_repetition_of chain
+        if let Some(ref repetition) = part.is_repetition_of {
+            let borrowed = repetition.borrow();
+            return self.get_voice_for_part(&borrowed);
+        }
+        None
+    }
 }
 
 /// All possible types of a song part. Some are repeatable (like refrains, etc.), some are not.
@@ -330,12 +361,13 @@ impl SongPartType {
         }
     }
 
-    /// Create a SongPartType from a string (case-insensitive)
+    /// Create a SongPartType from a string (case-insensitive).
+    /// Supports both canonical names (verse, chorus) and YML aliases (stanza, refrain).
     pub fn from_string(s: &str) -> SongPartType {
         // Make the string lowercase
         let s: String = s.to_lowercase();
         match s.as_str() {
-            "verse" => SongPartType::Verse,
+            "verse" | "stanza" => SongPartType::Verse,
             "chorus" => SongPartType::Chorus,
             "bridge" => SongPartType::Bridge,
             "intro" => SongPartType::Intro,
@@ -343,8 +375,8 @@ impl SongPartType {
             "interlude" => SongPartType::Interlude,
             "instrumental" => SongPartType::Instrumental,
             "solo" => SongPartType::Solo,
-            "preChorus" => SongPartType::PreChorus,
-            "postChorus" => SongPartType::PostChorus,
+            "prechorus" => SongPartType::PreChorus,
+            "postchorus" => SongPartType::PostChorus,
             "refrain" => SongPartType::Refrain,
             _ => SongPartType::Other,
         }
