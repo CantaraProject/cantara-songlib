@@ -42,6 +42,13 @@ struct VerseData {
     var_ref: String,
 }
 
+/// Data for a voice definition (e.g. sopranoVoiceStanza, sopranoVoiceRefrain).
+#[derive(Serialize)]
+struct VoiceDefinition {
+    var_name: String,
+    content: String,
+}
+
 /// All data needed to render the LilyPond template.
 #[derive(Serialize)]
 struct LilypondTemplateData {
@@ -53,9 +60,9 @@ struct LilypondTemplateData {
     global_content: String,
     has_chords: bool,
     chord_content: String,
-    voice_var_name: String,
-    voice_content: String,
-    voice_var_ref: String,
+    voice_defs: Vec<VoiceDefinition>,
+    /// Combined voice variable references for the Staff, e.g. `\sopranoVoiceStanza \sopranoVoiceRefrain`
+    combined_voice_refs: String,
     voice_part_name: String,
     /// The part reference including backslash, e.g. `\sopranoVoicePart`
     voice_part_ref: String,
@@ -103,11 +110,13 @@ chordNames = \chordmode {
 }
 
 {{/if}}
-{{{voice_var_name}}} = \relative c' {
+{{#each voice_defs}}
+{{{this.var_name}}} = \relative c' {
   \global
-{{{voice_content}}}
+{{{this.content}}}
 }
 
+{{/each}}
 {{#each verses}}
 {{{this.var_name}}} = \lyricmode {
   \set stanza = "{{{this.stanza}}}"
@@ -117,7 +126,7 @@ chordNames = \chordmode {
 {{/each}}
 {{{voice_part_name}}} = \new Staff \with {
   midiInstrument = "{{{midi_instrument}}}"
-} { {{{voice_var_ref}}} }
+} { {{{combined_voice_refs}}} }
 {{#each verses}}
 \addlyrics { {{{this.var_ref}}} }
 {{/each}}
@@ -222,10 +231,11 @@ fn find_lyrics(part: &SongPart) -> Option<&SongPartContent> {
 /// configurable `\paper` and `\layout` blocks, and numbered verse variables.
 ///
 /// When a refrain or chorus has its own melody (voice content), the exporter
-/// concatenates the stanza melody + refrain melody into one combined voice
-/// variable. The first verse's lyrics include the refrain text appended, so
-/// all syllables align with the full combined melody. Subsequent verses only
-/// contain their stanza lyrics.
+/// creates separate voice variables for stanza and refrain (e.g.
+/// `sopranoVoiceStanza` and `sopranoVoiceRefrain`). The first verse's lyrics
+/// include the refrain text appended (or prepended for refrain-first songs),
+/// so all syllables align with the full combined melody. Subsequent verses
+/// only contain their stanza lyrics.
 ///
 /// Returns an error if the song has no voice content to export.
 pub fn lilypond_from_song(song: &Song, settings: &LilypondSettings) -> Result<String, String> {
@@ -238,9 +248,8 @@ pub fn lilypond_from_song(song: &Song, settings: &LilypondSettings) -> Result<St
         .find_map(|part| song.get_voice_for_part(part))
         .ok_or_else(|| "Song has no voice content for LilyPond export".to_string())?;
 
-    let voice_var_name = voice_type_to_var_name(&stanza_voice.voice_type).to_string();
-    let voice_var_ref = format!("\\{}", voice_var_name);
-    let voice_part_name = format!("{}Part", voice_var_name);
+    let base_voice_name = voice_type_to_var_name(&stanza_voice.voice_type).to_string();
+    let voice_part_name = format!("{}Part", base_voice_name);
     let voice_part_ref = format!("\\{}", voice_part_name);
 
     // --- Step 2: Check refrain/chorus parts for their own independent voice ---
@@ -265,11 +274,45 @@ pub fn lilypond_from_song(song: &Song, settings: &LilypondSettings) -> Result<St
         None
     };
 
-    // --- Step 3: Build combined voice content ---
-    // Stanza melody first, then refrain melody appended (if it has its own).
-    let mut combined_voice = stanza_voice.content.trim().to_string();
+    // --- Step 3: Determine ordering and build voice definitions ---
+    let is_refrain_first = song
+        .part_orders
+        .first()
+        .map_or(false, |o| o.is_refrain_first());
+
+    let mut voice_defs: Vec<VoiceDefinition> = Vec::new();
+    let combined_voice_refs: String;
+
     if let Some(rv) = refrain_own_voice {
-        combined_voice = format!("{}\n\n{}", combined_voice, rv.content.trim());
+        // Separate voice variables for stanza and refrain
+        let stanza_var = format!("{}Stanza", base_voice_name);
+        let refrain_var = format!("{}Refrain", base_voice_name);
+
+        let stanza_def = VoiceDefinition {
+            var_name: stanza_var.clone(),
+            content: indent_lines(stanza_voice.content.trim(), "  "),
+        };
+        let refrain_def = VoiceDefinition {
+            var_name: refrain_var.clone(),
+            content: indent_lines(rv.content.trim(), "  "),
+        };
+
+        if is_refrain_first {
+            combined_voice_refs = format!("\\{} \\{}", refrain_var, stanza_var);
+            voice_defs.push(refrain_def);
+            voice_defs.push(stanza_def);
+        } else {
+            combined_voice_refs = format!("\\{} \\{}", stanza_var, refrain_var);
+            voice_defs.push(stanza_def);
+            voice_defs.push(refrain_def);
+        }
+    } else {
+        // Single voice variable (no independent refrain melody)
+        voice_defs.push(VoiceDefinition {
+            var_name: base_voice_name.clone(),
+            content: indent_lines(stanza_voice.content.trim(), "  "),
+        });
+        combined_voice_refs = format!("\\{}", base_voice_name);
     }
 
     // --- Step 4: Build global content (key, time, partial) ---
@@ -304,17 +347,25 @@ pub fn lilypond_from_song(song: &Song, settings: &LilypondSettings) -> Result<St
                 let var_name = format!("verse{}", number_to_word(verse_number));
                 let var_ref = format!("\\{}", var_name);
 
-                // For the first verse, append refrain lyrics if the refrain has
-                // its own melody. This ensures the lyrics align with the combined
-                // stanza+refrain voice.
+                // For the first verse, embed refrain lyrics if the refrain has
+                // its own melody. The position (before/after stanza lyrics)
+                // depends on the song order.
                 let mut lyrics_text = content.content.clone();
                 if is_first_verse {
                     if let Some(ref refrain_lyrics) = refrain_lyrics_for_embedding {
-                        lyrics_text = format!(
-                            "{}\n\n{}",
-                            lyrics_text.trim(),
-                            refrain_lyrics.trim()
-                        );
+                        if is_refrain_first {
+                            lyrics_text = format!(
+                                "{}\n\n{}",
+                                refrain_lyrics.trim(),
+                                lyrics_text.trim()
+                            );
+                        } else {
+                            lyrics_text = format!(
+                                "{}\n\n{}",
+                                lyrics_text.trim(),
+                                refrain_lyrics.trim()
+                            );
+                        }
                     }
                     is_first_verse = false;
                 }
@@ -374,9 +425,8 @@ pub fn lilypond_from_song(song: &Song, settings: &LilypondSettings) -> Result<St
         global_content,
         has_chords,
         chord_content,
-        voice_var_name,
-        voice_content: indent_lines(&combined_voice, "  "),
-        voice_var_ref,
+        voice_defs,
+        combined_voice_refs,
         voice_part_name,
         voice_part_ref,
         midi_instrument: "choir aahs".to_string(),
@@ -452,18 +502,37 @@ mod tests {
 
         let ly_output = lilypond_from_song(&song, &LilypondSettings::default()).unwrap();
 
-        // Combined voice should contain BOTH stanza and refrain melodies
+        // Separate voice variables for stanza and refrain
+        assert!(
+            ly_output.contains("sopranoVoiceStanza = \\relative c'"),
+            "Stanza voice variable missing"
+        );
+        assert!(
+            ly_output.contains("sopranoVoiceRefrain = \\relative c'"),
+            "Refrain voice variable missing"
+        );
+
+        // Both melodies should be present
         assert!(
             ly_output.contains("d8 e | fis4 fis g4 fis8 e"),
             "Stanza melody missing"
         );
         assert!(
             ly_output.contains("fis8( g ) | a8 a a a d,4. d8"),
-            "Refrain melody missing from combined voice"
+            "Refrain melody missing"
         );
 
-        // Voice should be a single \relative c' block with both melodies
-        assert!(ly_output.contains("sopranoVoice = \\relative c'"));
+        // Staff should reference both voice variables in stanza-refrain order
+        assert!(
+            ly_output.contains("\\sopranoVoiceStanza \\sopranoVoiceRefrain"),
+            "Staff should combine stanza and refrain voices"
+        );
+
+        // There should NOT be a single combined sopranoVoice variable
+        assert!(
+            !ly_output.contains("sopranoVoice = \\relative c'"),
+            "Should not have a single combined sopranoVoice"
+        );
 
         // Verse 1 should contain stanza 1 lyrics AND refrain lyrics
         assert!(ly_output.contains("verseOne = \\lyricmode"));
@@ -534,5 +603,98 @@ mod tests {
         assert_eq!(number_to_word(10), "Ten");
         assert_eq!(number_to_word(20), "Twenty");
         assert_eq!(number_to_word(21), "N21");
+    }
+
+    #[test]
+    fn test_lilypond_export_refrain_stanza_refrain() {
+        // Test refrain-stanza-refrain ordering: refrain melody comes first
+        let yml = r#"
+version: 0.1
+title: Refrain First Song
+default_language: en
+tags:
+  author: Test Author
+score:
+  key: c major
+  time: 4/4
+orders:
+  - refrain-stanza-refrain
+parts:
+  - type: refrain
+    contents:
+    - type: voice
+      number: 1
+      content: |
+        c4 d e f | g2 g2
+    - type: lyrics
+      number: 1
+      content: |
+        Refrain text here, la la la la
+  - type: stanza
+    contents:
+    - type: voice
+      number: 1
+      content: |
+        e4 f g a | b2 b2
+    - type: lyrics
+      number: 1
+      content: |
+        First verse lyrics here
+    - type: lyrics
+      number: 2
+      content: |
+        Second verse lyrics here
+"#;
+        let song = song_yml::import_from_yml_string(yml).unwrap();
+        let ly_output = lilypond_from_song(&song, &LilypondSettings::default()).unwrap();
+
+        // Separate voice variables for refrain and stanza
+        assert!(
+            ly_output.contains("sopranoVoiceRefrain = \\relative c'"),
+            "Refrain voice variable missing"
+        );
+        assert!(
+            ly_output.contains("sopranoVoiceStanza = \\relative c'"),
+            "Stanza voice variable missing"
+        );
+
+        // Staff should reference refrain BEFORE stanza (refrain-first order)
+        assert!(
+            ly_output.contains("\\sopranoVoiceRefrain \\sopranoVoiceStanza"),
+            "Staff should have refrain before stanza for refrain-first songs"
+        );
+
+        // Verse 1 lyrics should have refrain lyrics BEFORE stanza lyrics
+        assert!(ly_output.contains("verseOne = \\lyricmode"));
+        // The refrain lyrics should appear before the stanza lyrics in verse 1
+        let verse_one_start = ly_output.find("verseOne = \\lyricmode").unwrap();
+        let verse_two_start = ly_output.find("verseTwo = \\lyricmode").unwrap();
+        let verse_one_block = &ly_output[verse_one_start..verse_two_start];
+        let refrain_pos = verse_one_block.find("Refrain text").unwrap();
+        let stanza_pos = verse_one_block.find("First verse").unwrap();
+        assert!(
+            refrain_pos < stanza_pos,
+            "Refrain lyrics should come before stanza lyrics in verse 1 for refrain-first songs"
+        );
+
+        // Verse 2 should only contain stanza lyrics (no refrain)
+        let verse_two_end = ly_output[verse_two_start..].find("\n}\n").unwrap();
+        let verse_two_block = &ly_output[verse_two_start..verse_two_start + verse_two_end];
+        assert!(
+            !verse_two_block.contains("Refrain text"),
+            "Verse 2 should not contain refrain lyrics"
+        );
+        assert!(
+            verse_two_block.contains("Second verse"),
+            "Verse 2 should contain its own stanza lyrics"
+        );
+
+        // There should be exactly 2 \addlyrics (one per verse)
+        let addlyrics_count = ly_output.matches("\\addlyrics").count();
+        assert_eq!(
+            addlyrics_count, 2,
+            "Expected 2 addlyrics, got {}",
+            addlyrics_count
+        );
     }
 }

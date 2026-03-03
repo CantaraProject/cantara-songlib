@@ -742,6 +742,11 @@ impl PartOrder {
         parts
     }
 
+    /// Returns true if the order starts with a refrain (RefrainVerseBridgeRefrain).
+    pub fn is_refrain_first(&self) -> bool {
+        matches!(self.partorderrule, PartOrderRule::RefrainVerseBridgeRefrain)
+    }
+
     pub fn to_parts(&self, song: &Song) -> Vec<Rc<RefCell<SongPart>>> {
         match self.partorderrule.clone() {
             PartOrderRule::Custom(parts) => parts.clone(),
