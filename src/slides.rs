@@ -103,6 +103,10 @@ impl Slide {
                 pdf_path,
                 page_number,
             }),
+            linked_file: None,
+        }
+    }
+
     pub fn new_multi_language_content_slide(
         main_text_list: Vec<String>,
         spoiler_text_vector: Vec<String>,
@@ -253,6 +257,8 @@ pub struct PdfPageSlide {
     pub pdf_path: String,
     /// The page number to display (1-based)
     pub page_number: u32,
+}
+
 /// Configuration for which language(s) to display on presentation slides
 #[derive(Clone, Serialize, Deserialize, PartialEq, Debug)]
 pub enum LanguageConfiguration {
