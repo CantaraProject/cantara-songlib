@@ -42,6 +42,8 @@ pub enum SlideContent {
     MultiLanguageMainContent(MultiLanguageMainContentSlide),
     SimplePicture(SimplePictureSlide),
     Empty(EmptySlide),
+    /// A slide that displays a single page from a PDF document
+    PdfPage(PdfPageSlide),
 }
 
 /// A struct which represents a presented slide
@@ -90,6 +92,16 @@ impl Slide {
                     Some(string) => Some(string.trim().to_string()),
                     None => None,
                 },
+            }),
+            linked_file: None,
+        }
+    }
+
+    pub fn new_pdf_page_slide(pdf_path: String, page_number: u32) -> Self {
+        Slide {
+            slide_content: SlideContent::PdfPage(PdfPageSlide {
+                pdf_path,
+                page_number,
             }),
             linked_file: None,
         }
@@ -146,6 +158,7 @@ impl Slide {
             }
             SlideContent::SimplePicture(_) => false,
             SlideContent::Empty(_) => false,
+            SlideContent::PdfPage(_) => false,
         }
     }
 
@@ -160,6 +173,7 @@ impl Slide {
             }
             SlideContent::SimplePicture(_) => false,
             SlideContent::Empty(_) => false,
+            SlideContent::PdfPage(_) => false,
         }
     }
 }
@@ -234,6 +248,15 @@ pub struct TitleSlide {
 #[derive(Clone, Serialize, Deserialize, PartialEq, Debug)]
 pub struct SimplePictureSlide {
     picture_path: String,
+}
+
+/// A slide that displays a single page from a PDF document
+#[derive(Clone, Serialize, Deserialize, PartialEq, Debug)]
+pub struct PdfPageSlide {
+    /// The path to the PDF file
+    pub pdf_path: String,
+    /// The page number to display (1-based)
+    pub page_number: u32,
 }
 
 /// Configuration for which language(s) to display on presentation slides
@@ -432,6 +455,26 @@ mod tests {
     fn create_empty_slide() {
         let slide = Slide::new_empty_slide(false);
         assert!(matches!(slide.slide_content, SlideContent::Empty(_)));
+    }
+
+    #[test]
+    fn create_pdf_page_slide() {
+        let slide = Slide::new_pdf_page_slide("/path/to/document.pdf".to_string(), 3);
+        assert!(matches!(slide.slide_content, SlideContent::PdfPage(_)));
+        if let SlideContent::PdfPage(pdf_slide) = &slide.slide_content {
+            assert_eq!(pdf_slide.pdf_path, "/path/to/document.pdf");
+            assert_eq!(pdf_slide.page_number, 3);
+        }
+        assert!(!slide.has_spoiler());
+        assert!(!slide.has_meta_text());
+    }
+
+    #[test]
+    fn pdf_page_slide_is_serde_ready() {
+        let slide = Slide::new_pdf_page_slide("/path/to/file.pdf".to_string(), 1);
+        let json = serde_json::to_string(&slide).expect("Serialization failed");
+        let deserialized: Slide = serde_json::from_str(&json).expect("Deserialization failed");
+        assert_eq!(slide, deserialized);
     }
 
     #[test]
