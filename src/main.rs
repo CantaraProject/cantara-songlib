@@ -54,7 +54,12 @@ fn main() -> Result<(), std::io::Error> {
                     file.file_stem().unwrap().to_str().unwrap().to_string(),
                 );
                 println!("{:#?}", slides);
-            } else {
+            } else if file.extension() == Some(std::ffi::OsStr::new("song.yml")) || file.extension() == Some(std::ffi::OsStr::new("song.yaml")) {
+                let settings: SlideSettings = SlideSettings::default();
+
+                // Add implementation here
+            }
+            else {
                 return Err(std::io::Error::new(
                     std::io::ErrorKind::InvalidInput,
                     "The file type is not supported.",
