@@ -743,9 +743,9 @@ parts:
     }
 
     #[test]
-    fn test_final_bar_added_single_voice() {
-        // "Sei nicht stolz" stanza voice does NOT end with \bar "|."
-        // but the export should add it
+    fn test_final_bar_added_multi_section_melody() {
+        // "Sei nicht stolz" has separate stanza and refrain voices; the stanza voice
+        // does NOT end with \bar "|." in the source, but the export should add it.
         let content = std::fs::read_to_string(
             "testfiles/Sei nicht stolz auf das, was du bist.song.yml",
         )
