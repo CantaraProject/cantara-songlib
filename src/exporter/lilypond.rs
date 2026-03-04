@@ -754,9 +754,19 @@ parts:
         let ly_output = lilypond_from_song(&song, &LilypondSettings::default()).unwrap();
 
         // The last voice definition (refrain) should end with \bar "|."
+        // Ensure that the final occurrence of \bar "|." appears after the last
+        // voice variable header (sopranoVoiceRefrain), so we fail if the bar
+        // line is added in the wrong place.
+        let last_voice_header = "sopranoVoiceRefrain = \\relative c'";
+        let last_voice_start = ly_output
+            .find(last_voice_header)
+            .expect("Last voice header (refrain) not found in LilyPond output");
+        let final_bar_pos = ly_output
+            .rfind("\\bar \"|.\"")
+            .expect("LilyPond output should contain final bar line");
         assert!(
-            ly_output.contains("\\bar \"|.\""),
-            "LilyPond output should contain final bar line"
+            final_bar_pos > last_voice_start,
+            "Final bar line should appear after the last voice definition header"
         );
     }
 
