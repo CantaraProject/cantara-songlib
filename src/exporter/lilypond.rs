@@ -47,6 +47,10 @@ struct VerseData {
 struct VoiceDefinition {
     var_name: String,
     content: String,
+    /// Whether to include `\global` at the top of this voice definition.
+    /// Only the first voice in the combined sequence should include it,
+    /// so that key/time signatures are not repeated.
+    include_global: bool,
 }
 
 /// All data needed to render the LilyPond template.
@@ -112,8 +116,8 @@ chordNames = \chordmode {
 {{/if}}
 {{#each voice_defs}}
 {{{this.var_name}}} = \relative c' {
-  \global
-{{{this.content}}}
+{{#if this.include_global}}  \global
+{{/if}}{{{this.content}}}
 }
 
 {{/each}}
@@ -225,6 +229,16 @@ fn find_lyrics(part: &SongPart) -> Option<&SongPartContent> {
     part.contents.iter().find(|c| c.voice_type.is_lyrics())
 }
 
+/// Ensure voice content ends with `\bar "|."` (final bar line).
+fn ensure_final_bar(content: &str) -> String {
+    let trimmed = content.trim_end();
+    if trimmed.ends_with("\\bar \"|.\"") {
+        trimmed.to_string()
+    } else {
+        format!("{} \\bar \"|.\"", trimmed)
+    }
+}
+
 /// Generate a complete LilyPond (.ly) file from a Song.
 ///
 /// The output uses a variable-based structure with `\relative c'` wrapping,
@@ -288,29 +302,40 @@ pub fn lilypond_from_song(song: &Song, settings: &LilypondSettings) -> Result<St
         let stanza_var = format!("{}Stanza", base_voice_name);
         let refrain_var = format!("{}Refrain", base_voice_name);
 
-        let stanza_def = VoiceDefinition {
-            var_name: stanza_var.clone(),
-            content: indent_lines(stanza_voice.content.trim(), "  "),
-        };
-        let refrain_def = VoiceDefinition {
-            var_name: refrain_var.clone(),
-            content: indent_lines(rv.content.trim(), "  "),
-        };
+        let stanza_content = indent_lines(stanza_voice.content.trim(), "  ");
+        let refrain_content = indent_lines(rv.content.trim(), "  ");
 
         if is_refrain_first {
             combined_voice_refs = format!("\\{} \\{}", refrain_var, stanza_var);
-            voice_defs.push(refrain_def);
-            voice_defs.push(stanza_def);
+            voice_defs.push(VoiceDefinition {
+                var_name: refrain_var.clone(),
+                content: refrain_content,
+                include_global: true,
+            });
+            voice_defs.push(VoiceDefinition {
+                var_name: stanza_var.clone(),
+                content: ensure_final_bar(&stanza_content),
+                include_global: false,
+            });
         } else {
             combined_voice_refs = format!("\\{} \\{}", stanza_var, refrain_var);
-            voice_defs.push(stanza_def);
-            voice_defs.push(refrain_def);
+            voice_defs.push(VoiceDefinition {
+                var_name: stanza_var.clone(),
+                content: stanza_content,
+                include_global: true,
+            });
+            voice_defs.push(VoiceDefinition {
+                var_name: refrain_var.clone(),
+                content: ensure_final_bar(&refrain_content),
+                include_global: false,
+            });
         }
     } else {
         // Single voice variable (no independent refrain melody)
         voice_defs.push(VoiceDefinition {
             var_name: base_voice_name.clone(),
-            content: indent_lines(stanza_voice.content.trim(), "  "),
+            content: ensure_final_bar(&indent_lines(stanza_voice.content.trim(), "  ")),
+            include_global: true,
         });
         combined_voice_refs = format!("\\{}", base_voice_name);
     }
@@ -695,6 +720,97 @@ parts:
             addlyrics_count, 2,
             "Expected 2 addlyrics, got {}",
             addlyrics_count
+        );
+    }
+
+    #[test]
+    fn test_ensure_final_bar() {
+        // Should add \bar "|." when not present
+        assert_eq!(
+            ensure_final_bar("  c4 d e f"),
+            "  c4 d e f \\bar \"|.\""
+        );
+        // Should not duplicate when already present
+        assert_eq!(
+            ensure_final_bar("  f2. \\bar \"|.\""),
+            "  f2. \\bar \"|.\""
+        );
+        // Should handle trailing whitespace
+        assert_eq!(
+            ensure_final_bar("  c4 d e f  \n"),
+            "  c4 d e f \\bar \"|.\""
+        );
+    }
+
+    #[test]
+    fn test_final_bar_added_multi_section_melody() {
+        // "Sei nicht stolz" has separate stanza and refrain voices; the stanza voice
+        // does NOT end with \bar "|." in the source, but the export should add it.
+        let content = std::fs::read_to_string(
+            "testfiles/Sei nicht stolz auf das, was du bist.song.yml",
+        )
+        .unwrap();
+        let song = song_yml::import_from_yml_string(&content).unwrap();
+        let ly_output = lilypond_from_song(&song, &LilypondSettings::default()).unwrap();
+
+        // The last voice definition (refrain) should end with \bar "|."
+        // Ensure that the final occurrence of \bar "|." appears after the last
+        // voice variable header (sopranoVoiceRefrain), so we fail if the bar
+        // line is added in the wrong place.
+        let last_voice_header = "sopranoVoiceRefrain = \\relative c'";
+        let last_voice_start = ly_output
+            .find(last_voice_header)
+            .expect("Last voice header (refrain) not found in LilyPond output");
+        let final_bar_pos = ly_output
+            .rfind("\\bar \"|.\"")
+            .expect("LilyPond output should contain final bar line");
+        assert!(
+            final_bar_pos > last_voice_start,
+            "Final bar line should appear after the last voice definition header"
+        );
+    }
+
+    #[test]
+    fn test_final_bar_not_duplicated() {
+        // Amazing Grace already has \bar "|." in source - should not be duplicated
+        let content = std::fs::read_to_string("testfiles/Amazing Grace.song.yml").unwrap();
+        let song = song_yml::import_from_yml_string(&content).unwrap();
+        let ly_output = lilypond_from_song(&song, &LilypondSettings::default()).unwrap();
+
+        let bar_count = ly_output.matches("\\bar \"|.\"").count();
+        assert_eq!(
+            bar_count, 1,
+            "Expected exactly 1 final bar, got {}",
+            bar_count
+        );
+    }
+
+    #[test]
+    fn test_global_only_in_first_voice() {
+        // "Sei nicht stolz" has separate stanza and refrain voices.
+        // \global should only appear in the first voice definition.
+        let content = std::fs::read_to_string(
+            "testfiles/Sei nicht stolz auf das, was du bist.song.yml",
+        )
+        .unwrap();
+        let song = song_yml::import_from_yml_string(&content).unwrap();
+        let ly_output = lilypond_from_song(&song, &LilypondSettings::default()).unwrap();
+
+        // The stanza voice (first in stanza-refrain order) should have \global
+        let stanza_start = ly_output.find("sopranoVoiceStanza = \\relative c'").unwrap();
+        let refrain_start = ly_output.find("sopranoVoiceRefrain = \\relative c'").unwrap();
+        let stanza_block = &ly_output[stanza_start..refrain_start];
+        assert!(
+            stanza_block.contains("\\global"),
+            "First voice (stanza) should include \\global"
+        );
+
+        // The refrain voice (second) should NOT have \global
+        let refrain_end = ly_output[refrain_start..].find("\n}\n").unwrap();
+        let refrain_block = &ly_output[refrain_start..refrain_start + refrain_end];
+        assert!(
+            !refrain_block.contains("\\global"),
+            "Second voice (refrain) should NOT include \\global"
         );
     }
 }
