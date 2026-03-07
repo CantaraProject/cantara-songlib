@@ -1083,13 +1083,13 @@ pub fn render_lilypond_to_svg(ly_content: &str, lilypond_bin: &Path) -> Result<V
     let svg_path = temp_dir.path().join("output.cropped.svg");
     if svg_path.exists() {
         return std::fs::read(&svg_path)
-            .map_err(|e| format!("Failed to read SVG output: {}", e));
+            .map_err(|e| format!("Failed to read cropped SVG output: {}", e));
     }
 
     // Fallback: try output.svg (older LilyPond versions)
     let svg_fallback = temp_dir.path().join("output.svg");
     std::fs::read(&svg_fallback)
-        .map_err(|e| format!("Failed to read SVG output: {}", e))
+        .map_err(|e| format!("No SVG output found (neither cropped nor standard): {}", e))
 }
 
 /// Render a LilyPond string to **PDF** via the LilyPond binary.
@@ -1125,7 +1125,7 @@ pub fn render_lilypond_to_pdf(ly_content: &str, lilypond_bin: &Path) -> Result<V
 
     let pdf_path = temp_dir.path().join("output.pdf");
     std::fs::read(&pdf_path)
-        .map_err(|e| format!("Failed to read PDF output: {}", e))
+        .map_err(|e| format!("Failed to read PDF output (file may not have been generated): {}", e))
 }
 
 /// Render each song part as a **cropped SVG** via LilyPond.
