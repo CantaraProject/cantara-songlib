@@ -281,14 +281,23 @@ fn ensure_final_bar(content: &str) -> String {
     }
 }
 
+/// Escape a string for safe inclusion in a LilyPond double-quoted string literal.
+/// Currently escapes backslashes (`\` → `\\`) and double quotes (`"` → `\"`).
+fn escape_lilypond_string(s: &str) -> String {
+    s.replace('\\', "\\\\").replace('"', "\\\"")
+}
+
 /// Build the LilyPond `#(define fonts ...)` block for a custom font setting.
 fn build_font_block(font: &FontSetting) -> Option<String> {
     match font {
         FontSetting::Default => None,
-        FontSetting::Specific { family } => Some(format!(
-            "  #(define fonts\n    (set-global-fonts\n      #:roman \"{}\"\n    ))",
-            family
-        )),
+        FontSetting::Specific { family } => {
+            let escaped_family = escape_lilypond_string(family);
+            Some(format!(
+                "  #(define fonts\n    (set-global-fonts\n      #:roman \"{}\"\n    ))",
+                escaped_family
+            ))
+        }
     }
 }
 
