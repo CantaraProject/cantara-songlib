@@ -130,6 +130,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let settings = LilypondSettings {
                 paper_size: paper_size.clone(),
                 layout_indent: indent.clone(),
+                ..LilypondSettings::default()
             };
             match exporter::lilypond::lilypond_from_song(&song, &settings) {
                 Ok(ly_output) => println!("{}", ly_output),
