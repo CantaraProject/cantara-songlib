@@ -8,12 +8,49 @@ use crate::slides::{wrap_blocks, LanguageConfiguration, Slide, SlideSettings};
 use crate::song::{LyricLanguage, Song, SongPartContentType};
 use crate::templating::render_metadata;
 
-/// Strip LilyPond syllable markers (`--`) from lyrics text for presentation display.
+/// Strip LilyPond lyric markup from lyrics text for presentation display.
+///
+/// Removes syllable separators (`--`), melisma placeholders (`_`) and inline
+/// commands together with their arguments (e.g.
+/// `\set ignoreMelismata = ##t`, `\unset ignoreMelismata`), none of which are
+/// meant to be seen by the audience.
 fn strip_lilypond_markers(text: &str) -> String {
     // Replace " -- " (syllable separator) with nothing, joining syllables
     let result = text.replace(" -- ", "");
     // Also handle cases where -- appears at line boundaries
-    result.replace("-- ", "").replace(" --", "")
+    let result = result.replace("-- ", "").replace(" --", "");
+
+    result
+        .lines()
+        .map(strip_lilypond_markers_in_line)
+        .collect::<Vec<String>>()
+        .join("\n")
+}
+
+/// Remove LilyPond commands and melisma markers from a single lyrics line.
+fn strip_lilypond_markers_in_line(line: &str) -> String {
+    let mut kept: Vec<&str> = Vec::new();
+    let mut words = line.split_whitespace().peekable();
+
+    while let Some(word) = words.next() {
+        if word.starts_with('\\') {
+            // A command such as `\set ignoreMelismata = ##t` — drop the command
+            // name, its target and, if present, the `= value` assignment.
+            words.next();
+            if words.peek() == Some(&"=") {
+                words.next();
+                words.next();
+            }
+            continue;
+        }
+        // `_` is LilyPond's melisma extender and carries no text.
+        if word == "_" {
+            continue;
+        }
+        kept.push(word);
+    }
+
+    kept.join(" ")
 }
 
 /// Find lyrics content for a single language in a song part's contents.
