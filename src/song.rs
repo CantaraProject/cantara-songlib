@@ -236,6 +236,20 @@ impl Song {
         parts
     }
 
+    /// Gets all parts which act as a refrain, i.e. every part whose type is
+    /// [`SongPartType::Chorus`] or [`SongPartType::Refrain`], in song order.
+    ///
+    /// The two types only differ in the source format they came from
+    /// (classic `.song` vs. `.song.yml`), so consumers which care about the
+    /// singing structure should use this instead of filtering by a single type.
+    pub fn get_chorus_like_parts(&self) -> Vec<Rc<RefCell<SongPart>>> {
+        self.parts
+            .iter()
+            .filter(|part| part.borrow().part_type.is_chorus_like())
+            .cloned()
+            .collect()
+    }
+
     /// Unpacks all parts of the song
     /// # Returns
     /// A list of all parts of the song
@@ -399,6 +413,17 @@ impl SongPartType {
             "refrain" => SongPartType::Refrain,
             _ => SongPartType::Other,
         }
+    }
+
+    /// Returns whether a song part type acts as a refrain, i.e. a block which is
+    /// repeated after every verse.
+    ///
+    /// The classic `.song` importer labels such blocks as [`SongPartType::Chorus`]
+    /// while the `.song.yml` format uses `refrain` ([`SongPartType::Refrain`]).
+    /// Both mean the same thing musically, so the ordering algorithms have to
+    /// treat them alike.
+    pub fn is_chorus_like(&self) -> bool {
+        matches!(self, SongPartType::Chorus | SongPartType::Refrain)
     }
 
     /// Returns whether a song part type is repeatable.
@@ -677,8 +702,8 @@ impl PartOrder {
             );
         }
         
-        // If the song begins with a refrain, it is likely that the song has the structure RefrainVerseBridgeRefrain
-        else if first_part_type == SongPartType::Refrain {
+        // If the song begins with a refrain/chorus, it is likely that the song has the structure RefrainVerseBridgeRefrain
+        else if first_part_type.is_chorus_like() {
             return PartOrder::new(
                 PartOrderName::Default,
                 PartOrderRule::RefrainVerseBridgeRefrain,
@@ -686,7 +711,7 @@ impl PartOrder {
         }
 
         // If the song has no refrain or bridge, it is likely that the song has the structure VerseRefrainBridgeRefrain
-        if (song.get_part_count(SongPartType::Refrain) == 0) || (song.get_part_count(SongPartType::Bridge) == 0) {
+        if song.get_chorus_like_parts().is_empty() || (song.get_part_count(SongPartType::Bridge) == 0) {
             return PartOrder::new(
                 PartOrderName::Default,
                 PartOrderRule::VerseRefrainBridgeRefrain,
@@ -700,45 +725,55 @@ impl PartOrder {
         )
     }
 
-    /// This function applies an algorithm which creates a song structure as normally it is sang.
+    /// Builds the singing order for the *verse — refrain — … — bridge — refrain* rule.
+    ///
+    /// Every verse is followed by the pre-chorus (if any) and the refrain; the
+    /// bridge is inserted before the very last refrain. The refrain is looked up
+    /// by *type*, not by its position in the part list, so it is honoured no
+    /// matter whether the source format interleaves the blocks (classic `.song`)
+    /// or lists all verses first and the refrain last (`.song.yml`).
     fn apply_versechorusbridgechorus_algorithm(&self, song: &Song) -> Vec<Rc<RefCell<SongPart>>> {
+        let verse_parts: Vec<Rc<RefCell<SongPart>>> = song.get_parts_by_type(SongPartType::Verse);
+        let prechorus_parts: Vec<Rc<RefCell<SongPart>>> =
+            song.get_parts_by_type(SongPartType::PreChorus);
+        let chorus_parts: Vec<Rc<RefCell<SongPart>>> = song.get_chorus_like_parts();
+        let bridge_parts: Vec<Rc<RefCell<SongPart>>> = song.get_parts_by_type(SongPartType::Bridge);
+
+        // Without verses there is nothing to interleave — keep the original order.
+        if verse_parts.is_empty() {
+            return song.parts.clone();
+        }
+
+        // The rule only supports a single refrain/bridge; anything more complex
+        // needs PartOrderRule::Custom.
+        let chorus = chorus_parts.first();
+        let bridge = bridge_parts.first();
+
+        if chorus.is_none() && bridge.is_none() && prechorus_parts.is_empty() {
+            return verse_parts;
+        }
+
         let mut parts: Vec<Rc<RefCell<SongPart>>> = Vec::new();
-        let stanza_parts: Vec<Rc<RefCell<SongPart>>> = song.get_parts_by_type(SongPartType::Verse);
-        let chorus_parts: Vec<Rc<RefCell<SongPart>>> = song.get_parts_by_type(SongPartType::Chorus);
+        let last_verse_index = verse_parts.len() - 1;
 
-        if chorus_parts.is_empty() {
-            return stanza_parts;
-        }
+        for (index, verse) in verse_parts.iter().enumerate() {
+            parts.push(verse.clone());
 
-        let mut current_choruses: Vec<Rc<RefCell<SongPart>>> = Vec::new();
-
-        for part_refcell in song.parts.clone() {
-            let part = part_refcell.borrow().clone();
-            if part.part_type == SongPartType::Verse {
-                parts.push(Rc::new(RefCell::new(part)));
-                parts.append(&mut current_choruses.clone());
-            } else if part.part_type == SongPartType::Chorus {
-                if current_choruses.len() > 1 && current_choruses.first().unwrap().borrow().get_type() == SongPartType::PreChorus {
-                    // Remove only Chorus not PreChorus
-                    let first_element = current_choruses.first().unwrap().borrow().clone();
-                    current_choruses.clear();
-                    current_choruses.push(Rc::new(RefCell::new(first_element.clone())));
-                } else {
-                    current_choruses.clear();
+            // The bridge is played right before the final refrain.
+            if index == last_verse_index {
+                if let Some(bridge) = bridge {
+                    parts.push(bridge.clone());
                 }
+            }
 
-                current_choruses.push(Rc::new(RefCell::new(part)));
-                parts.append(&mut current_choruses.clone());
+            if let Some(prechorus) = prechorus_parts.first() {
+                parts.push(prechorus.clone());
             }
-            else if part.part_type == SongPartType::PreChorus {
-                current_choruses.push(Rc::new(RefCell::new(part)));
-                parts.append(&mut current_choruses.clone());
-            }
-            else if part.part_type == SongPartType::Bridge {
-                current_choruses.push(Rc::new(RefCell::new(part)));
-                parts.append(&mut current_choruses.clone());
+            if let Some(chorus) = chorus {
+                parts.push(chorus.clone());
             }
         }
+
         parts
     }
 
@@ -752,7 +787,7 @@ impl PartOrder {
             PartOrderRule::Custom(parts) => parts.clone(),
             PartOrderRule::VerseRefrainBridgeRefrain => { self.apply_versechorusbridgechorus_algorithm(song) },
             PartOrderRule::RefrainVerseBridgeRefrain => {
-                match song.get_parts_by_type(SongPartType::Refrain).first() {
+                match song.get_chorus_like_parts().first() {
                     None => self.apply_versechorusbridgechorus_algorithm(song),
                     Some(first_part) => {
                         let mut parts = vec![first_part.clone()];
@@ -762,7 +797,7 @@ impl PartOrder {
                 }
             }
         }
-    } 
+    }
 }
 
 /// A rule which defines the order of the parts in a song

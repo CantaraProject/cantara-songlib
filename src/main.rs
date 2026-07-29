@@ -1,6 +1,7 @@
 //! This crate also provides a very small wrapper cli for directly converting and parsing song files.
 
 use cantara_songlib::exporter;
+use cantara_songlib::exporter::abc::AbcSettings;
 use cantara_songlib::exporter::lilypond::LilypondSettings;
 use cantara_songlib::importer::classic_song::slides_from_classic_song;
 use cantara_songlib::importer::song_yml;
@@ -44,6 +45,21 @@ enum Commands {
         /// Layout indent setting (default: "#0")
         #[arg(short, long, default_value = "#0")]
         indent: String,
+    },
+
+    /// Generates an ABC notation (.abc) music file
+    Abc {
+        /// Unit note length for the output (default: "1/4")
+        #[arg(short, long, default_value = "1/4")]
+        unit_note_length: String,
+
+        /// Include chord symbols above the staff
+        #[arg(long, default_value = "true", action = clap::ArgAction::Set)]
+        include_chords: bool,
+
+        /// Include all verses in the output (if false, only first verse is included)
+        #[arg(long, default_value = "true", action = clap::ArgAction::Set)]
+        all_verses: bool,
     },
 }
 
@@ -130,9 +146,27 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let settings = LilypondSettings {
                 paper_size: paper_size.clone(),
                 layout_indent: indent.clone(),
+                ..LilypondSettings::default()
             };
             match exporter::lilypond::lilypond_from_song(&song, &settings) {
                 Ok(ly_output) => println!("{}", ly_output),
+                Err(e) => return Err(e.into()),
+            }
+        }
+
+        Commands::Abc {
+            unit_note_length,
+            include_chords,
+            all_verses,
+        } => {
+            let song = import_song(&file)?;
+            let settings = AbcSettings {
+                unit_note_length: unit_note_length.clone(),
+                include_chords: *include_chords,
+                include_all_verses: *all_verses,
+            };
+            match exporter::abc::abc_from_song(&song, &settings) {
+                Ok(abc_output) => println!("{}", abc_output),
                 Err(e) => return Err(e.into()),
             }
         }
