@@ -274,18 +274,6 @@ fn is_token_delimiter(c: char) -> bool {
 /// how the LilyPond exporter emits it.
 fn parse_voice(content: &str) -> Vec<MusicEvent> {
     let chars: Vec<char> = content.chars().collect();
-    let byte_offsets: Vec<usize> = {
-        let mut offsets = Vec::with_capacity(chars.len() + 1);
-        let mut acc = 0;
-        for c in &chars {
-            offsets.push(acc);
-            acc += c.len_utf8();
-        }
-        offsets.push(acc);
-        offsets
-    };
-    let _ = byte_offsets;
-
     let mut events: Vec<MusicEvent> = Vec::new();
     let mut index = 0usize;
     let mut last_duration = Frac::new(1, 4);
@@ -2012,6 +2000,95 @@ parts:
         let abc = abc_from_song_separated(&amazing_grace(), &AbcSettings::default()).unwrap();
         assert!(abc.contains("T:Amazing Grace"));
         assert!(abc.contains("w:1.~A-ma-zing"));
+    }
+
+    /// An empty line terminates a tune in ABC — everything after it is ignored
+    /// by renderers, so the body must not contain one.
+    #[test]
+    fn test_no_blank_lines_inside_the_tune() {
+        for song in [amazing_grace(), sei_nicht_stolz()] {
+            for output in [
+                abc_from_song(&song, &AbcSettings::default()).unwrap(),
+                abc_from_song_separated(&song, &AbcSettings::default()).unwrap(),
+                abc_part_from_song(&song, 0, &AbcSettings::default()).unwrap(),
+            ] {
+                assert!(
+                    !output.trim_end().contains("\n\n"),
+                    "a blank line would end the tune early:\n{}",
+                    output
+                );
+            }
+        }
+    }
+
+    // --- Bar lines ------------------------------------------------------
+
+    #[test]
+    fn test_missing_barlines_are_inserted() {
+        // LilyPond treats `|` as an optional check; ABC needs it to be present.
+        let mut sections = [Section {
+            annotation: None,
+            events: parse_voice("c4 d e f g a b c"),
+            lyrics: Vec::new(),
+        }];
+        insert_missing_barlines(&mut sections, Frac::new(4, 4), Frac::zero());
+
+        let abc = render_events(
+            &sections[0].events,
+            &key_alterations(0),
+            Frac::new(1, 4),
+            &mut BarAccidentals::default(),
+        );
+        assert_eq!(abc, "C D E F | G A B c");
+    }
+
+    #[test]
+    fn test_existing_barlines_are_not_duplicated() {
+        let mut sections = [Section {
+            annotation: None,
+            events: parse_voice("c4 d e f | g a b c"),
+            lyrics: Vec::new(),
+        }];
+        insert_missing_barlines(&mut sections, Frac::new(4, 4), Frac::zero());
+
+        let abc = render_events(
+            &sections[0].events,
+            &key_alterations(0),
+            Frac::new(1, 4),
+            &mut BarAccidentals::default(),
+        );
+        assert_eq!(abc, "C D E F | G A B c");
+    }
+
+    #[test]
+    fn test_anacrusis_is_respected() {
+        let mut song = Song::new("Pickup");
+        song.add_tag("key", "c major");
+        song.add_tag("time", "4/4");
+        song.add_tag("partial", "4");
+        let part = song.add_part_of_type(SongPartType::Verse, Some(1));
+        {
+            let mut part = part.borrow_mut();
+            part.add_content(SongPartContent {
+                voice_type: SongPartContentType::LeadVoice,
+                // One pickup note, then two full bars.
+                content: "g4 c4 d e f g a b c".to_string(),
+            });
+            part.add_content(SongPartContent {
+                voice_type: SongPartContentType::Lyrics {
+                    language: LyricLanguage::Default,
+                },
+                content: "a b c d e f g h i".to_string(),
+            });
+        }
+
+        let abc = abc_from_song(&song, &AbcSettings::default()).unwrap();
+        let music = abc
+            .lines()
+            .find(|line| line.starts_with("G,"))
+            .expect("music line");
+        // The bar line has to follow the single pickup note, not the fourth one.
+        assert_eq!(music, "G, | C D E F | G A B c |]");
     }
 
     #[test]
