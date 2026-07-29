@@ -69,14 +69,13 @@ impl Default for LilypondSettings {
     }
 }
 
-/// Data for a single verse/refrain variable in the template.
+/// One `\addlyrics` line of the paper score.
+///
+/// The content is a sequence of variable references, e.g. `\verseOne \chorus`
+/// for the first verse of a song whose refrain has its own melody.
 #[derive(Serialize)]
-struct VerseData {
-    var_name: String,
-    stanza: String,
-    content: String,
-    /// The variable reference including backslash, e.g. `\verseOne`
-    var_ref: String,
+struct LyricLine {
+    refs: String,
 }
 
 /// Data for a voice definition (e.g. sopranoVoiceStanza, sopranoVoiceRefrain).
@@ -108,7 +107,11 @@ struct LilypondTemplateData {
     /// The part reference including backslash, e.g. `\sopranoVoicePart`
     voice_part_ref: String,
     midi_instrument: String,
-    verses: Vec<VerseData>,
+    /// Every `\lyricmode` variable of the score: the verses, and — when the
+    /// refrain has its own melody — the `chorus` and `chorusSkip` variables.
+    lyric_defs: Vec<LyricsDefinition>,
+    /// One entry per `\addlyrics` line, in printing order.
+    lyric_lines: Vec<LyricLine>,
     staff_size: Option<f32>,
     font_block: Option<String>,
 }
@@ -163,18 +166,18 @@ chordNames = \chordmode {
 }
 
 {{/each}}
-{{#each verses}}
+{{#each lyric_defs}}
 {{{this.var_name}}} = \lyricmode {
-  \set stanza = "{{{this.stanza}}}"
-{{{this.content}}}
+{{#if this.stanza}}  \set stanza = "{{{this.stanza}}}"
+{{/if}}{{{this.content}}}
 }
 
 {{/each}}
 {{{voice_part_name}}} = \new Staff \with {
   midiInstrument = "{{{midi_instrument}}}"
 } { {{{combined_voice_refs}}} }
-{{#each verses}}
-\addlyrics { {{{this.var_ref}}} }
+{{#each lyric_lines}}
+\addlyrics { {{{this.refs}}} }
 {{/each}}
 
 {{#if has_chords}}
@@ -269,6 +272,38 @@ fn find_own_voice(part: &SongPart) -> Option<&SongPartContent> {
 /// Find the first lyrics content in a part.
 fn find_lyrics(part: &SongPart) -> Option<&SongPartContent> {
     part.contents.iter().find(|c| c.voice_type.is_lyrics())
+}
+
+/// Count how many syllable slots a `\lyricmode` block occupies.
+///
+/// This is what `\skip 1` has to be repeated for when a verse needs to start
+/// after another lyrics block. Syllable separators (`--`), extender lines
+/// (`__`) and inline commands together with their arguments take no slot,
+/// while `_` (a blank syllable) does.
+fn count_lyric_syllables(lyrics: &str) -> usize {
+    let mut count = 0usize;
+    let mut words = lyrics.split_whitespace().peekable();
+
+    while let Some(word) = words.next() {
+        if word.starts_with('\\') {
+            // Drop the command, its target and an optional `= value`.
+            words.next();
+            if words.peek() == Some(&"=") {
+                words.next();
+                words.next();
+            }
+            continue;
+        }
+
+        if word == "--" || word == "__" {
+            continue;
+        }
+
+        // A word may carry the separator without spaces ("hei--lig").
+        count += word.split("--").filter(|part| !part.is_empty()).count();
+    }
+
+    count
 }
 
 /// Ensure voice content ends with `\bar "|."` (final bar line).
@@ -494,10 +529,23 @@ global = {
 ///
 /// When a refrain or chorus has its own melody (voice content), the exporter
 /// creates separate voice variables for stanza and refrain (e.g.
-/// `sopranoVoiceStanza` and `sopranoVoiceRefrain`). The first verse's lyrics
-/// include the refrain text appended (or prepended for refrain-first songs),
-/// so all syllables align with the full combined melody. Subsequent verses
-/// only contain their stanza lyrics.
+/// `sopranoVoiceStanza` and `sopranoVoiceRefrain`) and a separate `chorus`
+/// lyrics variable. The first `\addlyrics` line then references both, so the
+/// refrain text stays an independent, reusable block:
+///
+/// ```text
+/// \addlyrics { \verseOne \chorus }
+/// \addlyrics { \verseTwo }
+/// ```
+///
+/// For refrain-first songs the order is reversed. Because the refrain melody
+/// then comes first on the staff, the later verses have to skip past it to end
+/// up underneath the first verse:
+///
+/// ```text
+/// \addlyrics { \chorus \verseOne }
+/// \addlyrics { \chorusSkip \verseTwo }
+/// ```
 ///
 /// Returns an error if the song has no voice content to export.
 pub fn lilypond_from_song(song: &Song, settings: &LilypondSettings) -> Result<String, String> {
@@ -525,9 +573,10 @@ pub fn lilypond_from_song(song: &Song, settings: &LilypondSettings) -> Result<St
     let refrain_own_voice: Option<&SongPartContent> =
         refrain_parts.iter().find_map(|part| find_own_voice(part));
 
-    // Only collect refrain lyrics for embedding into verse 1 if the refrain
-    // has its own melody (i.e. it's a separate musical section).
-    let refrain_lyrics_for_embedding: Option<String> = if refrain_own_voice.is_some() {
+    // The refrain only becomes its own `chorus` lyrics variable if it has its
+    // own melody; otherwise it shares the stanza music and is printed as a
+    // further `\addlyrics` line (see step 6).
+    let chorus_lyrics: Option<String> = if refrain_own_voice.is_some() {
         refrain_parts
             .iter()
             .find_map(|part| find_lyrics(part))
@@ -598,65 +647,101 @@ pub fn lilypond_from_song(song: &Song, settings: &LilypondSettings) -> Result<St
         .collect();
     verse_parts_sorted.sort_by_key(|p| p.number);
 
-    let mut verses: Vec<VerseData> = Vec::new();
+    let mut lyric_defs: Vec<LyricsDefinition> = Vec::new();
+    let mut verse_refs: Vec<String> = Vec::new();
     let mut verse_number: u32 = 1;
-    let mut is_first_verse = true;
 
     for part in &verse_parts_sorted {
         for content in &part.contents {
             if content.voice_type.is_lyrics() {
                 let var_name = format!("verse{}", number_to_word(verse_number));
-                let var_ref = format!("\\{}", var_name);
-
-                // For the first verse, embed refrain lyrics if the refrain has
-                // its own melody. The position (before/after stanza lyrics)
-                // depends on the song order.
-                let mut lyrics_text = content.content.clone();
-                if is_first_verse {
-                    if let Some(ref refrain_lyrics) = refrain_lyrics_for_embedding {
-                        if is_refrain_first {
-                            lyrics_text = format!(
-                                "{}\n\n{}",
-                                refrain_lyrics.trim(),
-                                lyrics_text.trim()
-                            );
-                        } else {
-                            lyrics_text = format!(
-                                "{}\n\n{}",
-                                lyrics_text.trim(),
-                                refrain_lyrics.trim()
-                            );
-                        }
-                    }
-                    is_first_verse = false;
-                }
-
-                verses.push(VerseData {
+                verse_refs.push(format!("\\{}", var_name));
+                lyric_defs.push(LyricsDefinition {
                     var_name,
-                    stanza: format!("{}.", verse_number),
-                    content: indent_lines(&lyrics_text, "  "),
-                    var_ref,
+                    stanza: Some(format!("{}.", verse_number)),
+                    content: indent_lines(&content.content, "  "),
                 });
                 verse_number += 1;
             }
         }
     }
 
-    // --- Step 6: Refrain/chorus parts WITHOUT their own voice ---
-    // If the refrain shares the verse melody (no independent voice), add its
-    // lyrics as separate variables (traditional \addlyrics approach).
-    if refrain_own_voice.is_none() {
+    // --- Step 6: The refrain lyrics ---
+    let mut lyric_lines: Vec<LyricLine> = Vec::new();
+
+    if let Some(ref chorus_text) = chorus_lyrics {
+        // The refrain has its own melody, so it becomes its own `chorus`
+        // variable that is referenced from the first `\addlyrics` line instead
+        // of being pasted into the first verse's text.
+        lyric_defs.push(LyricsDefinition {
+            var_name: "chorus".to_string(),
+            // No `\set stanza` — the refrain carries no verse number.
+            stanza: None,
+            content: indent_lines(chorus_text.trim(), "  "),
+        });
+
+        if verse_refs.is_empty() {
+            // A refrain melody but no verse lyrics — print the refrain alone
+            // rather than leaving the variable unreferenced.
+            lyric_lines.push(LyricLine {
+                refs: "\\chorus".to_string(),
+            });
+        } else if is_refrain_first {
+            // The refrain melody comes first on the staff. Verses after the
+            // first therefore have to skip its syllables, otherwise LilyPond
+            // would align them with the refrain instead of the stanza.
+            let skip_count = count_lyric_syllables(chorus_text);
+            if verse_refs.len() > 1 && skip_count > 0 {
+                lyric_defs.push(LyricsDefinition {
+                    var_name: "chorusSkip".to_string(),
+                    stanza: None,
+                    content: format!("  \\repeat unfold {} {{ \\skip 1 }}", skip_count),
+                });
+            }
+
+            for (index, verse_ref) in verse_refs.iter().enumerate() {
+                lyric_lines.push(LyricLine {
+                    refs: if index == 0 {
+                        format!("\\chorus {}", verse_ref)
+                    } else if skip_count > 0 {
+                        format!("\\chorusSkip {}", verse_ref)
+                    } else {
+                        verse_ref.clone()
+                    },
+                });
+            }
+        } else {
+            for (index, verse_ref) in verse_refs.iter().enumerate() {
+                lyric_lines.push(LyricLine {
+                    refs: if index == 0 {
+                        format!("{} \\chorus", verse_ref)
+                    } else {
+                        verse_ref.clone()
+                    },
+                });
+            }
+        }
+    } else {
+        // The refrain shares the verse melody (or there is none), so every
+        // verse gets a plain line and the refrain follows as an extra one.
+        for verse_ref in &verse_refs {
+            lyric_lines.push(LyricLine {
+                refs: verse_ref.clone(),
+            });
+        }
+
         let mut refrain_number: u32 = 1;
         for part in &refrain_parts {
             for content in &part.contents {
                 if content.voice_type.is_lyrics() {
                     let var_name = format!("refrain{}", number_to_word(refrain_number));
-                    let var_ref = format!("\\{}", var_name);
-                    verses.push(VerseData {
+                    lyric_lines.push(LyricLine {
+                        refs: format!("\\{}", var_name),
+                    });
+                    lyric_defs.push(LyricsDefinition {
                         var_name,
-                        stanza: format!("R{}.", refrain_number),
+                        stanza: Some(format!("R{}.", refrain_number)),
                         content: indent_lines(&content.content, "  "),
-                        var_ref,
                     });
                     refrain_number += 1;
                 }
@@ -691,7 +776,8 @@ pub fn lilypond_from_song(song: &Song, settings: &LilypondSettings) -> Result<St
         voice_part_name,
         voice_part_ref,
         midi_instrument: "choir aahs".to_string(),
-        verses,
+        lyric_defs,
+        lyric_lines,
         staff_size: settings.staff_size,
         font_block: build_font_block(&settings.font),
     };
@@ -1290,28 +1376,52 @@ mod tests {
             "Should not have a single combined sopranoVoice"
         );
 
-        // Verse 1 should contain stanza 1 lyrics AND refrain lyrics
-        assert!(ly_output.contains("verseOne = \\lyricmode"));
-        assert!(
-            ly_output.contains("Sei nicht stolz"),
-            "Verse 1 stanza lyrics missing"
-        );
+        // The refrain gets its own lyrics variable — it must not be pasted
+        // into the first verse's text.
+        assert!(ly_output.contains("chorus = \\lyricmode"));
         assert!(
             ly_output.contains("Denn wer sich"),
-            "Refrain lyrics should be embedded in verse 1"
+            "Refrain lyrics missing"
         );
-
-        // Verse 2 should contain only stanza 2 lyrics (no refrain)
-        assert!(ly_output.contains("verseTwo = \\lyricmode"));
-
-        // Verse 3 should contain stanza 3 lyrics
-        assert!(ly_output.contains("verseThree = \\lyricmode"));
-
-        // There should NOT be a separate refrainOne variable
-        // (refrain lyrics are embedded into verse 1 instead)
         assert!(
             !ly_output.contains("refrainOne"),
-            "Refrain with own voice should not produce separate refrain variable"
+            "Refrain with own voice should not produce a numbered refrain variable"
+        );
+
+        // The chorus carries no verse number.
+        let chorus_start = ly_output.find("chorus = \\lyricmode").unwrap();
+        let chorus_end = chorus_start + ly_output[chorus_start..].find("\n}\n").unwrap();
+        let chorus_block = &ly_output[chorus_start..chorus_end];
+        assert!(
+            !chorus_block.contains("\\set stanza"),
+            "The refrain must not get a stanza number:\n{}",
+            chorus_block
+        );
+
+        // Verse 1 holds only its own text …
+        let verse_one_start = ly_output.find("verseOne = \\lyricmode").unwrap();
+        let verse_one_end = verse_one_start + ly_output[verse_one_start..].find("\n}\n").unwrap();
+        let verse_one_block = &ly_output[verse_one_start..verse_one_end];
+        assert!(verse_one_block.contains("Sei nicht stolz"));
+        assert!(
+            !verse_one_block.contains("Denn wer sich"),
+            "Refrain text must not be concatenated into verse 1:\n{}",
+            verse_one_block
+        );
+
+        // … and the refrain is attached in the \addlyrics line instead.
+        assert!(
+            ly_output.contains("\\addlyrics { \\verseOne \\chorus }"),
+            "Refrain should be referenced from the first lyrics line:\n{}",
+            ly_output
+        );
+        assert!(ly_output.contains("\\addlyrics { \\verseTwo }"));
+        assert!(ly_output.contains("\\addlyrics { \\verseThree }"));
+
+        // A stanza-first song needs no skip variable.
+        assert!(
+            !ly_output.contains("chorusSkip"),
+            "chorusSkip is only needed when the refrain comes first"
         );
 
         // There should be exactly 3 \addlyrics (one per verse)
@@ -1421,20 +1531,44 @@ parts:
             "Staff should have refrain before stanza for refrain-first songs"
         );
 
-        // Verse 1 lyrics should have refrain lyrics BEFORE stanza lyrics
-        assert!(ly_output.contains("verseOne = \\lyricmode"));
-        // The refrain lyrics should appear before the stanza lyrics in verse 1
+        // The refrain is its own variable, referenced first in the lyrics line.
+        assert!(ly_output.contains("chorus = \\lyricmode"));
+        assert!(
+            ly_output.contains("\\addlyrics { \\chorus \\verseOne }"),
+            "The first lyrics line should start with the refrain:\n{}",
+            ly_output
+        );
+
+        // Verses after the first have to skip the refrain's syllables so that
+        // they end up underneath the first verse, not underneath the refrain.
+        // "Refrain text here, la la la la" = 7 syllables.
+        assert!(
+            ly_output.contains("chorusSkip = \\lyricmode"),
+            "A refrain-first song needs a skip variable:\n{}",
+            ly_output
+        );
+        assert!(
+            ly_output.contains("\\repeat unfold 7 { \\skip 1 }"),
+            "chorusSkip must skip one slot per refrain syllable:\n{}",
+            ly_output
+        );
+        assert!(
+            ly_output.contains("\\addlyrics { \\chorusSkip \\verseTwo }"),
+            "Verse 2 should skip past the refrain:\n{}",
+            ly_output
+        );
+
+        // Neither verse variable may contain the refrain's text.
         let verse_one_start = ly_output.find("verseOne = \\lyricmode").unwrap();
         let verse_two_start = ly_output.find("verseTwo = \\lyricmode").unwrap();
         let verse_one_block = &ly_output[verse_one_start..verse_two_start];
-        let refrain_pos = verse_one_block.find("Refrain text").unwrap();
-        let stanza_pos = verse_one_block.find("First verse").unwrap();
+        assert!(verse_one_block.contains("First verse"));
         assert!(
-            refrain_pos < stanza_pos,
-            "Refrain lyrics should come before stanza lyrics in verse 1 for refrain-first songs"
+            !verse_one_block.contains("Refrain text"),
+            "Refrain text must not be concatenated into verse 1:\n{}",
+            verse_one_block
         );
 
-        // Verse 2 should only contain stanza lyrics (no refrain)
         let verse_two_end = ly_output[verse_two_start..].find("\n}\n").unwrap();
         let verse_two_block = &ly_output[verse_two_start..verse_two_start + verse_two_end];
         assert!(
@@ -1452,6 +1586,65 @@ parts:
             addlyrics_count, 2,
             "Expected 2 addlyrics, got {}",
             addlyrics_count
+        );
+    }
+
+    #[test]
+    fn test_count_lyric_syllables() {
+        assert_eq!(count_lyric_syllables("Refrain text here, la la la la"), 7);
+        // `--` joins syllables and is not a slot of its own.
+        assert_eq!(count_lyric_syllables("hei -- lig ist."), 3);
+        assert_eq!(count_lyric_syllables("hei--lig ist."), 3);
+        // `_` is a blank syllable and does occupy a note.
+        assert_eq!(count_lyric_syllables("weg -- ge -- tan. _"), 4);
+        // Commands and their arguments occupy nothing.
+        assert_eq!(
+            count_lyric_syllables("\\set ignoreMelismata = ##t Da -- rum \\unset ignoreMelismata"),
+            2
+        );
+        assert_eq!(count_lyric_syllables(""), 0);
+    }
+
+    #[test]
+    fn test_refrain_first_with_a_single_verse_needs_no_skip() {
+        let yml = r#"
+version: 0.1
+title: One Verse
+score:
+  key: c major
+  time: 4/4
+orders:
+  - refrain-stanza-refrain
+parts:
+  - type: refrain
+    contents:
+    - type: voice
+      number: 1
+      content: |
+        c4 d e f
+    - type: lyrics
+      number: 1
+      content: |
+        one two three four
+  - type: stanza
+    contents:
+    - type: voice
+      number: 1
+      content: |
+        e4 f g a
+    - type: lyrics
+      number: 1
+      content: |
+        five six se -- ven
+"#;
+        let song = song_yml::import_from_yml_string(yml).unwrap();
+        let ly_output = lilypond_from_song(&song, &LilypondSettings::default()).unwrap();
+
+        assert!(ly_output.contains("\\addlyrics { \\chorus \\verseOne }"));
+        assert!(
+            !ly_output.contains("chorusSkip"),
+            "with only one verse nothing has to be skipped:\n{}",
+            ly_output
         );
     }
 
