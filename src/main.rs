@@ -3,9 +3,9 @@
 use cantara_songlib::exporter;
 use cantara_songlib::exporter::abc::AbcSettings;
 use cantara_songlib::exporter::lilypond::LilypondSettings;
-use cantara_songlib::importer::classic_song::slides_from_classic_song;
-use cantara_songlib::importer::song_yml;
+use cantara_songlib::importer::import_song_from_file;
 use cantara_songlib::slides::{LanguageConfiguration, SlideSettings};
+use cantara_songlib::slides_from_file;
 
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
@@ -63,23 +63,6 @@ enum Commands {
     },
 }
 
-/// Import a Song from the given file path.
-fn import_song(file: &PathBuf) -> Result<cantara_songlib::song::Song, Box<dyn std::error::Error>> {
-    let path_str = file.to_string_lossy();
-    let is_song_yml = path_str.ends_with(".song.yml") || path_str.ends_with(".song.yaml");
-    let ext = file.extension().and_then(|e| e.to_str()).unwrap_or("");
-
-    if is_song_yml || ext == "yml" || ext == "yaml" {
-        let content = std::fs::read_to_string(file)?;
-        Ok(song_yml::import_from_yml_string(&content)?)
-    } else if ext == "song" {
-        let content = std::fs::read_to_string(file)?;
-        Ok(cantara_songlib::importer::classic_song::import_song(&content)?)
-    } else {
-        Err(format!("Unsupported file extension: {}", ext).into())
-    }
-}
-
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
 
@@ -115,34 +98,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 ..SlideSettings::default()
             };
 
-            let path_str = file.to_string_lossy();
-            let is_song_yml = path_str.ends_with(".song.yml") || path_str.ends_with(".song.yaml");
-            let ext = file.extension().and_then(|e| e.to_str()).unwrap_or("");
-
-            if ext == "song" && !is_song_yml {
-                // Classic .song format — direct slide generation
-                let file_content = std::fs::read_to_string(&file)?;
-                let slides = slides_from_classic_song(
-                    &file_content,
-                    &settings,
-                    file.file_stem().unwrap().to_str().unwrap().to_string(),
-                );
-                let json = serde_json::to_string_pretty(&slides)?;
-                println!("{}", json);
-            } else {
-                // Song-based pipeline (yml, yaml, etc.)
-                let song = import_song(&file)?;
-                let slides = exporter::slides::slides_from_song(&song, &settings);
-                let json = serde_json::to_string_pretty(&slides)?;
-                println!("{}", json);
-            }
+            let slides = slides_from_file(&file, &settings)?;
+            println!("{}", serde_json::to_string_pretty(&slides)?);
         }
 
         Commands::Lilypond {
             paper_size,
             indent,
         } => {
-            let song = import_song(&file)?;
+            let song = import_song_from_file(&file)?;
             let settings = LilypondSettings {
                 paper_size: paper_size.clone(),
                 layout_indent: indent.clone(),
@@ -159,7 +123,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             include_chords,
             all_verses,
         } => {
-            let song = import_song(&file)?;
+            let song = import_song_from_file(&file)?;
             let settings = AbcSettings {
                 unit_note_length: unit_note_length.clone(),
                 include_chords: *include_chords,

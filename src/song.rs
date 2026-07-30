@@ -424,6 +424,15 @@ pub struct SongPart {
     pub part_type: SongPartType,
     /// Distinguishes parts of the same type; 1-based.
     pub number: u32,
+    /// The heading the source file gave this part, e.g. `"Vers 1"`,
+    /// `"Pre-Chorus"` or `"주 후렴"`.
+    ///
+    /// The sung structure lives in [`SongPart::part_type`]; this keeps the
+    /// original wording so that nothing is lost when a heading does not map
+    /// cleanly onto a type — which is common for songs downloaded in a
+    /// language the importer has no vocabulary for.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
     /// Melodies, chords and lyrics belonging to this part.
     pub contents: Vec<SongPartContent>,
     /// Set when this part reuses another part's music, e.g. verse 2 sharing
@@ -437,6 +446,7 @@ impl SongPart {
         SongPart {
             part_type: id.part_type,
             number: id.number,
+            label: None,
             contents: Vec::new(),
             is_repetition_of: None,
         }
@@ -446,6 +456,23 @@ impl SongPart {
     /// disagree with them.
     pub fn id(&self) -> SongPartId {
         SongPartId::new(self.part_type, self.number)
+    }
+
+    /// The heading to show a human: the importer's original wording if there
+    /// was one, otherwise the id.
+    ///
+    /// ```
+    /// use cantara_songlib::song::*;
+    /// let mut part = SongPart::new(SongPartId::new(SongPartType::Verse, 1));
+    /// assert_eq!(part.display_label(), "verse.1");
+    /// part.label = Some("Vers 1".to_string());
+    /// assert_eq!(part.display_label(), "Vers 1");
+    /// ```
+    pub fn display_label(&self) -> String {
+        match &self.label {
+            Some(label) => label.clone(),
+            None => self.id().to_string(),
+        }
     }
 
     /// Append a content block.

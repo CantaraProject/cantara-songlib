@@ -16,9 +16,10 @@ Everything goes through one type. An importer reads a file into a [`song::Song`]
 and an exporter turns that song into an output format:
 
 ```text
-.song  ─┐                        ┌─► slides   (JSON for the presentation)
-.song.yml├─► importer ─► Song ─► exporter ─► LilyPond (.ly, SVG, PDF)
-.cssf  ─┘                        └─► ABC      (.abc)
+.song     ─┐                          ┌─► slides   (JSON for the presentation)
+.song.yml  ├─► importer ─► Song ─► exporter ─► LilyPond (.ly, SVG, PDF)
+.ccli      │                          └─► ABC      (.abc)
+.cssf     ─┘
 ```
 
 Because the model sits in the middle, every input format gains every output
@@ -29,6 +30,7 @@ orders, several voices, multiple languages and metadata.
 
 - The Cantara classic song format (lyrics only), see [`importer::classic_song`].
 - The YAML song format (lyrics and scores), see [`importer::song_yml`].
+- CCLI SongSelect exports (lyrics only), see [`importer::ccli`].
 - The cssf song format (lyrics and scores), see [`importer::cssf`]. (under construction)
 
 # Export formats
@@ -73,7 +75,7 @@ use importer::errors::*;
 use slides::{LanguageConfiguration, ShowMetaInformation, Slide, SlideSettings};
 use std::error::Error;
 use std::ffi::{c_char, c_int, CStr, CString};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 
 pub mod song;
@@ -85,6 +87,7 @@ pub mod song;
 #[cfg(doctest)]
 #[doc = include_str!("../docs/data-model.md")]
 #[doc = include_str!("../docs/abc-export.md")]
+#[doc = include_str!("../docs/ccli-import.md")]
 pub struct DocumentationExamples;
 
 pub mod importer;
@@ -167,45 +170,60 @@ pub extern "C" fn create_presentation_from_file_c(
     }
 }
 
-/// Create a presentation from a file and return the slides or an error if something went wrong
-pub fn create_presentation_from_file(file_path: PathBuf, slide_settings: SlideSettings) -> Result<Vec<Slide>, Box<dyn Error>> {
+/// Create presentation slides from a song file, whatever format it is in.
+///
+/// The format is detected from the file name — see
+/// [`importer::import_song_from_file`] for the list. Classic `.song` files take
+/// a dedicated path because that format encodes the presentation order in the
+/// file itself, including the spoiler blocks that the generic converter cannot
+/// reconstruct from a [`song::Song`].
+///
+/// # Errors
+/// [`importer::errors::CantaraFileDoesNotExistError`] if the path does not
+/// exist, or whatever the importer reports.
+pub fn slides_from_file(
+    file_path: impl AsRef<Path>,
+    slide_settings: &SlideSettings,
+) -> Result<Vec<Slide>, Box<dyn Error>> {
+    let file_path = file_path.as_ref();
+
     if !file_path.exists() {
-        return Err(
-            Box::new(CantaraFileDoesNotExistError)
-        )
+        return Err(Box::new(CantaraFileDoesNotExistError));
     }
 
-    let path_str = file_path.to_string_lossy();
-    let is_song_yml = path_str.ends_with(".song.yml") || path_str.ends_with(".song.yaml");
-    let ext = file_path.extension().and_then(|e| e.to_str()).unwrap_or("");
+    let file_type = filetypes::FileType::from_path(file_path).ok_or_else(|| {
+        Box::new(CantaraImportUnknownFileExtensionError {
+            file_extension: file_path
+                .extension()
+                .and_then(|extension| extension.to_str())
+                .unwrap_or("")
+                .to_string(),
+        })
+    })?;
 
-    // Handle .song.yml / .yml / .yaml files via Song-based pipeline
-    if is_song_yml || ext == "yml" || ext == "yaml" {
-        let file_content = std::fs::read_to_string(&file_path)?;
-        let song = importer::song_yml::import_from_yml_string(&file_content)?;
-        let slides = exporter::slides::slides_from_song(&song, &slide_settings);
-        return Ok(slides);
+    if file_type == filetypes::FileType::ClassicSongFile {
+        let content = std::fs::read_to_string(file_path)?;
+        let backup_title = file_path
+            .file_stem()
+            .and_then(|stem| stem.to_str())
+            .unwrap_or_default()
+            .to_string();
+        return Ok(slides_from_classic_song(&content, slide_settings, backup_title));
     }
 
-    // Handle classic .song files
-    if ext == "song" {
-        let file_content = std::fs::read_to_string(&file_path).unwrap();
-        let slides = slides_from_classic_song(
-            &file_content,
-            &slide_settings,
-            file_path.file_stem().unwrap().to_str().unwrap().to_string()
-        );
+    let song = importer::import_song_from_file(file_path)?;
+    Ok(exporter::slides::slides_from_song(&song, slide_settings))
+}
 
-        return Ok(slides);
-    }
-
-    Err(
-        Box::new(
-            CantaraImportUnknownFileExtensionError {
-                file_extension: ext.to_string()
-            }
-        )
-    )
+/// Create a presentation from a file and return the slides or an error if something went wrong.
+///
+/// Kept as the name the C interface uses; prefer [`slides_from_file`], which
+/// accepts any `AsRef<Path>`.
+pub fn create_presentation_from_file(
+    file_path: PathBuf,
+    slide_settings: SlideSettings,
+) -> Result<Vec<Slide>, Box<dyn Error>> {
+    slides_from_file(file_path, &slide_settings)
 }
 
 fn c_string_to_rust(c_str: *const c_char) -> Option<String> {
@@ -244,7 +262,7 @@ fn rust_string_to_c_char(rust_str: String) -> Option<*const c_char> {
 
 #[cfg(test)]
 mod tests {
-    use std::path::PathBuf;
+    use std::path::{Path, PathBuf};
 
     use crate::{create_presentation_from_file, slides::SlideSettings};
 

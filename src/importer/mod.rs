@@ -4,21 +4,20 @@
 /// This module contains defined errors which may occur during the import process.
 pub mod errors;
 
-/// This module contains functions for importing Cantara Structured Song (cssf) files
 pub mod cssf;
 
-/// This module contains functions for importing classic song files.
 pub mod classic_song;
 
-/// This module contains functions for importing YAML-based song files (.song.yml)
 pub mod song_yml;
 
-/// Meta data helping functions
+pub mod ccli;
+
 pub mod metadata;
 
 use errors::CantaraFileDoesNotExistError;
 use serde::{Deserialize, Serialize};
 
+use crate::filetypes::FileType;
 use crate::song::Song;
 use std::error::Error;
 use std::ffi::OsStr;
@@ -69,63 +68,60 @@ pub enum SongFileParsingState {
     ClassicSongNotParsed,
     ParsedCantaraSong(Song),
 }
+/// Read a song file, choosing the importer by the file's name.
+///
+/// This is the one place that maps a file format onto an importer; the command
+/// line wrapper and the C interface both go through it, so a new format only
+/// has to be registered here.
+///
+/// | Extension | Format |
+/// |-----------|--------|
+/// | `.song` | the classic Cantara text format |
+/// | `.song.yml`, `.song.yaml`, `.yml`, `.yaml` | the YAML song format |
+/// | `.ccli` | a CCLI SongSelect export |
+/// | `.cssf` | Cantara Structured Song Format (under construction) |
+///
+/// A song whose file contains no title of its own is titled after the file.
+///
+/// # Errors
+/// [`errors::CantaraImportUnknownFileExtensionError`] if the extension is not
+/// one of the above, or the underlying I/O or parsing error.
+pub fn import_song_from_file(file_path: impl AsRef<Path>) -> Result<Song, Box<dyn Error>> {
+    let path = file_path.as_ref();
 
-/// Imports a song from a file.
-/// The function reads the content of the file and determines the file format by its extension.
-/// Depending on the file extension, the function calls the appropriate import function.
-/// The function returns a Song object.
-/// If the file extension is unknown, the function returns an error.
-/// # Arguments
-/// * `file_path` - A string slice that holds the path to the file.
-/// # Returns
-/// A Result object that holds either a Song object or an error.
-/// The error is of type `Box<dyn Error>`.
-/// The error can be of type CantaraImportUnknownFileExtensionError.
-/// # Example
-/// ```
-/// use cantara_songlib::importer::import_song_from_file;
-/// let song = import_song_from_file("tests/data/Amazing Grace.song").unwrap();
-/// assert_eq!(song.title, "Amazing Grace");
-/// ```
-pub fn import_song_from_file(file_path: &str) -> Result<Song, Box<dyn Error>> {
-    let content_wraped = std::fs::read_to_string(file_path);
-    if content_wraped.is_err() {
-        return Err(Box::new(content_wraped.err().unwrap()));
-    }
-    let content: String = content_wraped.unwrap();
+    let file_type = FileType::from_path(path).ok_or_else(|| {
+        Box::new(errors::CantaraImportUnknownFileExtensionError {
+            file_extension: path
+                .extension()
+                .and_then(OsStr::to_str)
+                .unwrap_or("")
+                .to_string(),
+        })
+    })?;
 
-    // Check for double extension .song.yml first
-    let is_song_yml = file_path.ends_with(".song.yml") || file_path.ends_with(".song.yaml");
+    let content = std::fs::read_to_string(path)?;
 
-    let file_extension: &str = Path::new(file_path)
-        .extension()
-        .and_then(OsStr::to_str)
-        .unwrap();
+    let mut song = match file_type {
+        FileType::SongYaml => song_yml::import_from_yml_string(&content)?,
+        FileType::ClassicSongFile => classic_song::import_song(&content)?,
+        FileType::CCLISongselectFile => ccli::import_from_ccli_string(&content)?,
+        FileType::CSSF => cssf::import_input_string(
+            content,
+            path.file_name()
+                .and_then(OsStr::to_str)
+                .unwrap_or("")
+                .to_string(),
+        )?,
+    };
 
-    if is_song_yml || file_extension == "yml" || file_extension == "yaml" {
-        return song_yml::import_from_yml_string(&content);
-    }
-
-    match file_extension {
-        "song" => {
-            let wraped_song: Result<Song, Box<dyn Error>> = classic_song::import_song(&content);
-            if wraped_song.is_err() {
-                return Result::Err(wraped_song.err().unwrap());
-            }
-            let mut song: Song = wraped_song.unwrap();
-            if song.title.is_empty() {
-                let title: &str = Path::new(file_path)
-                    .file_stem()
-                    .and_then(OsStr::to_str)
-                    .unwrap();
-                song.title = title.to_string();
-            }
-            Ok(song)
+    // Formats that carry no title fall back to the file name.
+    if song.title.trim().is_empty() {
+        if let Some(stem) = path.file_stem().and_then(OsStr::to_str) {
+            song.title = stem.to_string();
         }
-        _ => Err(Box::new(errors::CantaraImportUnknownFileExtensionError {
-            file_extension: file_extension.to_string(),
-        })),
     }
+
+    Ok(song)
 }
 
 
