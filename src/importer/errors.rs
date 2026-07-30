@@ -71,26 +71,17 @@ pub struct CantaraImportParsingError {
     pub error_type: ParsingErrorType,
 }
 
-impl CantaraImportParsingError {
-    fn error_text(&self) -> String {
-        format!("Cantara Parsing Error in line {}:\n  {}",
-            self.line.to_string(),
-            self.error_type.to_string()
+impl fmt::Display for CantaraImportParsingError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(
+            f,
+            "parsing error in line {}: {}",
+            self.line, self.error_type
         )
     }
 }
 
-impl fmt::Display for CantaraImportParsingError {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "There file does not exist")
-    }
-}
-
-impl std::error::Error for CantaraImportParsingError {
-    fn description(&self) -> &str {
-        "There file does not exist"
-    }
-}
+impl std::error::Error for CantaraImportParsingError {}
 
 #[derive(Debug, Clone)]
 pub enum ParsingErrorType {
@@ -98,12 +89,16 @@ pub enum ParsingErrorType {
     MetaDataNotCorrect,
 }
 
-impl ParsingErrorType {
-    pub fn to_string(&self) -> String {
+impl fmt::Display for ParsingErrorType {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
-            &ParsingErrorType::BlockNeedsToStartWithCategorization => "The block has to start with a categorization (e.g. #stanza.1".to_string(),
-            &ParsingErrorType::MetaDataNotCorrect => "The meta data is not correct, the syntax should be \"#key: value\"".to_string()
+            ParsingErrorType::BlockNeedsToStartWithCategorization => {
+                f.write_str("the block has to start with a categorization, e.g. '#stanza.1'")
+            }
+            ParsingErrorType::MetaDataNotCorrect => {
+                f.write_str("malformed metadata, the syntax is '#key: value'")
+            }
         }
     }
-    
 }
+

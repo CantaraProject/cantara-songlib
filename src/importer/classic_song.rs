@@ -4,39 +4,34 @@
 
 use std::collections::HashMap;
 use std::error::Error;
-use std::{cell::RefCell, rc::Rc};
 use std::sync::OnceLock;
 
 extern crate regex;
 use regex::{Regex,RegexBuilder};
 
 use crate::importer::errors::CantaraImportNoContentError;
-use crate::song::{
-    LyricLanguage, 
-    Song, 
-    SongPart, 
-    SongPartContent, 
-    SongPartContentType, 
-    SongPartType, 
-};
+use crate::song::{LyricLanguage, Song, SongPartContent, SongPartId, SongPartType};
 
 use crate::slides::*;
 use crate::templating::render_metadata;
 
 use crate::importer::metadata::*;
 
-fn parse_block(block: &str, song: Song) -> Result<Song, Box<dyn Error>> {
-    if block.is_empty() {
-        return Ok(song);
+/// Parse one block (a paragraph) of a classic `.song` file into the song.
+///
+/// The classic format has no markup for song structure. A block that repeats an
+/// earlier block verbatim is therefore the refrain, and this is how it is
+/// detected: the *earlier* occurrence is promoted from a verse to a chorus and
+/// the repeat is dropped, so the text is stored exactly once.
+fn parse_block(block: &str, song: &mut Song) -> Result<(), Box<dyn Error>> {
+    if block.trim().is_empty() {
+        return Ok(());
     }
 
-    let mut cloned_song: Song = song.clone();
-
-    // If first letter is a #, then parse the tags
+    // A block starting with '#' holds `#tag: value` metadata.
     if block.starts_with('#') {
-        
-        // With that we make sure that the regex is only compiled once.
-        let tags_regex = { 
+        // Compile the regex only once.
+        let tags_regex = {
             static TAGS_REGEX: OnceLock<Regex> = OnceLock::new();
             TAGS_REGEX.get_or_init(|| {
                 RegexBuilder::new(r"\s*#(\w+):\s*(.+)$")
@@ -44,57 +39,56 @@ fn parse_block(block: &str, song: Song) -> Result<Song, Box<dyn Error>> {
                     .build()
                     .unwrap()
             })
-        };        
+        };
 
-        tags_regex
-            .captures_iter(block)
-            .for_each(|capture: regex::Captures| {
-                let tag: &str = capture.get(1).unwrap().as_str();
-                let value: &str = capture.get(2).unwrap().as_str();
-                let tag_lowercase = tag.to_lowercase();
-                cloned_song.add_tag(tag_lowercase.as_str(), value);
-                if tag_lowercase == "title" {
-                    cloned_song.title = value.to_string();
-                }
-            });
-        return Ok(cloned_song);
-    }
-
-    // We will find first whether the content is already in the song, if yes, we have most likely a chorus.
-    // If not, we will add a new verse.
-    // If the content is already in the song, we will change the part type to chorus and add the content as a new chorus part.
-    
-    let content_vector = song.find_content_in_part(block);
-    let (part_type, part_reference) = match content_vector.len() {
-        0 => (SongPartType::Verse, None),
-        _ => (SongPartType::Chorus, Some(content_vector.last().unwrap().clone())),
-    };
-
-    let lyric_language: LyricLanguage = LyricLanguage::Default;
-    let lyrics_content: SongPartContent = SongPartContent {
-        voice_type: SongPartContentType::Lyrics {
-            language: lyric_language,
-        },
-        content: block.to_string(),
-    };
-    
-    if part_reference.is_none() {    
-        let song_part_reference: Rc<RefCell<SongPart>> = cloned_song.add_part_of_type(part_type, None);
-
-        let mut song_part: std::cell::RefMut<SongPart> = song_part_reference.borrow_mut();
-        let _ = &mut song_part.add_content(lyrics_content);
-        song_part.set_repition(part_reference);
-    } else {
-        let unwrapped_reference = part_reference.unwrap();
-        let mut previous_song_part: std::cell::RefMut<SongPart> = unwrapped_reference.borrow_mut();
-        {
-            let _ = &mut previous_song_part.set_type(SongPartType::Chorus);
+        for capture in tags_regex.captures_iter(block) {
+            let tag = capture.get(1).unwrap().as_str().to_lowercase();
+            let value = capture.get(2).unwrap().as_str();
+            song.set_tag(&tag, value);
+            if tag == "title" {
+                song.title = value.to_string();
+            }
         }
-        previous_song_part.number = 1;
-        let _ = &mut previous_song_part.update_id();
+        return Ok(());
     }
 
-    Ok(cloned_song)
+    if let Some(earlier) = song.last_part_with_content(block).map(|part| part.id()) {
+        promote_to_chorus(song, earlier);
+        return Ok(());
+    }
+
+    let id = song.add_part_of_type(SongPartType::Verse, None);
+    // Unwrap is safe: the part was just added.
+    song.part_mut(&id)
+        .unwrap()
+        .add_content(SongPartContent::lyrics(LyricLanguage::Default, block));
+
+    Ok(())
+}
+
+/// Turn an already imported verse into the song's chorus.
+///
+/// Called when a block turns out to be repeated. The part keeps its position in
+/// the part list — the ordering rules go by type, not by position — but gets a
+/// free chorus number so that no two parts end up with the same id.
+fn promote_to_chorus(song: &mut Song, id: SongPartId) {
+    if id.part_type.is_chorus_like() {
+        // Already recognised as the refrain on an earlier repeat.
+        return;
+    }
+
+    let mut number = 1;
+    while song
+        .part(&SongPartId::new(SongPartType::Chorus, number))
+        .is_some()
+    {
+        number += 1;
+    }
+
+    if let Some(part) = song.part_mut(&id) {
+        part.part_type = SongPartType::Chorus;
+        part.number = number;
+    }
 }
 
 /// Imports a song from a str which contains the song in the Cantara classic song format.
@@ -114,28 +108,18 @@ pub fn import_song(content: &str) -> Result<Song, Box<dyn Error>> {
 
     let mut song: Song = Song::new(&title);
 
-    let mut part: String = String::new();
-    // Parse the blocks
-    for line in content.trim().lines(){
-        match line.trim() {
-            "" => {
-                if part.is_empty() {
-                    continue;
-                }
-                song = parse_block(&part, song.clone()).unwrap();
-                part.clear();
-            }
-            _ => {
-                part.push_str(line.trim());
-                part.push('\n');
-            }
+    let mut block: String = String::new();
+    for line in content.trim().lines() {
+        if line.trim().is_empty() {
+            parse_block(&block, &mut song)?;
+            block.clear();
+        } else {
+            block.push_str(line.trim());
+            block.push('\n');
         }
     }
-    if !(part.is_empty()) {
-        song = parse_block(&part, song.clone()).unwrap();
-        part.clear();
-    }
-    
+    parse_block(&block, &mut song)?;
+
     Ok(song)
 }
 
@@ -147,7 +131,7 @@ pub fn import_song(content: &str) -> Result<Song, Box<dyn Error>> {
 /// - `backup_title`: The title (String) which will be used if no #title - tag is specified in the content. This is most likely coming from the filename.
 /// 
 /// # Returns
-/// A Vec<Slide> with the slides. This can be integrated into a PresentationChapter and a Presentation.
+/// A `Vec<Slide>` with the slides. This can be integrated into a PresentationChapter and a Presentation.
 pub fn slides_from_classic_song(
     content: &str,
     slide_settings: &SlideSettings,
@@ -388,8 +372,8 @@ mod test {
         );
         let song = import_song(&content).unwrap();
         assert_eq!(song.title, "Test Song");
-        assert_eq!(song.get_tag("author").unwrap(), "Test Author");
-        assert_eq!(song.get_tag("key").unwrap(), "C");
+        assert_eq!(song.tag("author").unwrap(), "Test Author");
+        assert_eq!(song.tag("key").unwrap(), "C");
     }
 
     #[test]
@@ -406,29 +390,29 @@ mod test {
             And a refrain"
             .to_string();
         let song = import_song(&content).unwrap();
-        assert_eq!(song.get_part_count(SongPartType::Verse), 2);
+        assert_eq!(song.part_count_of_type(SongPartType::Verse), 2);
     }
 
     #[test]
     fn test_file_amazing_grace() {
-        let song: Song = import_song_from_file("testfiles/Amazing Grace.song").unwrap();
+        let song: Song = import_song_from_file("tests/data/Amazing Grace.song").unwrap();
         assert_eq!(song.title, "Amazing Grace");
-        assert_eq!(song.get_tag("author").unwrap(), "John Newton");
-        assert_eq!(song.get_part_count(SongPartType::Verse), 3)
+        assert_eq!(song.tag("author").unwrap(), "John Newton");
+        assert_eq!(song.part_count_of_type(SongPartType::Verse), 3)
     }
 
     #[test]
     fn test_song_with_refrain() {
-        let song: Song = import_song_from_file("testfiles/O What A Savior That He Died For Me.song").unwrap();
+        let song: Song = import_song_from_file("tests/data/O What A Savior That He Died For Me.song").unwrap();
         assert_eq!(song.title, "O What A Savior That He Died For Me");
-        assert_eq!(song.get_part_count(SongPartType::Verse), 4);
-        assert_eq!(song.get_part_count(SongPartType::Chorus), 1);
+        assert_eq!(song.part_count_of_type(SongPartType::Verse), 4);
+        assert_eq!(song.part_count_of_type(SongPartType::Chorus), 1);
         dbg!(song);
     }
     
     #[test]
     fn generate_slides() {
-        let testfile = std::fs::read_to_string("testfiles/O What A Savior That He Died For Me.song").unwrap();
+        let testfile = std::fs::read_to_string("tests/data/O What A Savior That He Died For Me.song").unwrap();
         
         let presentation_settings = SlideSettings {
             title_slide: true,
@@ -453,7 +437,7 @@ mod test {
 
     #[test]
     fn test_metadata_displayed_correctly() {
-        let testfile = std::fs::read_to_string("testfiles/O What A Savior That He Died For Me.song").unwrap();
+        let testfile = std::fs::read_to_string("tests/data/O What A Savior That He Died For Me.song").unwrap();
         
         let mut presentation_settings = SlideSettings {
             title_slide: false,

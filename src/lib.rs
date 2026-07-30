@@ -8,12 +8,64 @@ Churches and other groups who want to sing together as a group often need to exp
 While the musicians need the songs in a music-sheet like format, the audience most often is interested in the lyrics only.
 The Cantara project tries to unify these requirements by providing a simple text format for songs which can be used to generate different output formats.
 The song format is a simple and easy to read text format which can be used to write songs in plain text files.
-The crate handles the import of these song files and provides a Song struct which can be used to generate different output formats.
-Due to legacy reasons, the crate also supports the import of songs from other formats.
-At the moment, the following import formats are supported:
-- The Cantara classic song format (lyrics only), see [`crate::importer::classic-song`] module.
-- The cssf song format (lyrics and scores), see cssf_song module. (under construction)
-- the CCLI song format (lyrics only), see ccli_song module. (under construction)
+The crate handles the import of these song files and provides a [`song::Song`] struct which can be used to generate different output formats.
+
+# The pipeline
+
+Everything goes through one type. An importer reads a file into a [`song::Song`],
+and an exporter turns that song into an output format:
+
+```text
+.song  ─┐                        ┌─► slides   (JSON for the presentation)
+.song.yml├─► importer ─► Song ─► exporter ─► LilyPond (.ly, SVG, PDF)
+.cssf  ─┘                        └─► ABC      (.abc)
+```
+
+Because the model sits in the middle, every input format gains every output
+format. See the [`song`] module for how a song is represented — parts, singing
+orders, several voices, multiple languages and metadata.
+
+# Import formats
+
+- The Cantara classic song format (lyrics only), see [`importer::classic_song`].
+- The YAML song format (lyrics and scores), see [`importer::song_yml`].
+- The cssf song format (lyrics and scores), see [`importer::cssf`]. (under construction)
+
+# Export formats
+
+- Presentation slides, see [`exporter::slides`].
+- LilyPond sheet music, see [`exporter::lilypond`].
+- ABC notation, see [`exporter::abc`].
+
+# Example
+
+```
+use cantara_songlib::importer::song_yml;
+use cantara_songlib::exporter::lilypond::{lilypond_from_song, LilypondSettings};
+
+let yml = r#"
+version: 0.1
+title: Example
+score:
+  key: c major
+  time: 4/4
+parts:
+  - type: stanza
+    contents:
+    - type: voice
+      number: 1
+      content: c4 d e f
+    - type: lyrics
+      number: 1
+      content: one two three four
+"#;
+
+let song = song_yml::import_from_yml_string(yml).unwrap();
+assert_eq!(song.title, "Example");
+
+let sheet = lilypond_from_song(&song, &LilypondSettings::default()).unwrap();
+assert!(sheet.contains("\\score"));
+```
 */
 
 use importer::classic_song::slides_from_classic_song;
@@ -24,10 +76,17 @@ use std::ffi::{c_char, c_int, CStr, CString};
 use std::path::PathBuf;
 
 
-/// - The `song` module contains the data structures needed for songs and its methods for managing and interpreting song data.
 pub mod song;
 
-/// - The `importer` module contains functions for importing songs from different formats.
+/// Compiles the Rust examples in `docs/` as doc tests so that the prose
+/// documentation cannot drift away from the API without the build noticing.
+///
+/// This type exists only while running doc tests and is not part of the API.
+#[cfg(doctest)]
+#[doc = include_str!("../docs/data-model.md")]
+#[doc = include_str!("../docs/abc-export.md")]
+pub struct DocumentationExamples;
+
 pub mod importer;
 
 /// The filetypes which are supported as input/output
@@ -39,7 +98,6 @@ pub mod slides;
 /// Templates which define the creation of slides and the insertion of data
 pub mod templating;
 
-/// The exporter module contains functions for exporting songs to different output formats (slides, LilyPond, etc.)
 pub mod exporter;
 
 /// Extern library call function for creating a presentation from a given input file
@@ -196,8 +254,8 @@ mod tests {
     fn create_example_song() {
         let song: Song = Song::new("Test Song");
         assert_eq!(song.title, "Test Song");
-        assert_eq!(song.get_total_part_count(), 0);
-        assert_eq!(song.get_unpacked_parts().len(), 0)
+        assert_eq!(song.part_count(), 0);
+        assert_eq!(song.parts().len(), 0)
     }
 
     #[test]

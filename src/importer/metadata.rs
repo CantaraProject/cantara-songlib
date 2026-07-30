@@ -59,7 +59,8 @@ pub fn get_filename_without_extension(path: &str) -> Option<&str> {
         .and_then(|s| s.to_str()) // Converts OsStr to str
 }
 
-pub mod tests {
+#[cfg(test)]
+mod tests {
     use super::*;
 
     #[test]

@@ -84,7 +84,7 @@ pub enum SongFileParsingState {
 /// # Example
 /// ```
 /// use cantara_songlib::importer::import_song_from_file;
-/// let song = import_song_from_file("testfiles/Amazing Grace.song").unwrap();
+/// let song = import_song_from_file("tests/data/Amazing Grace.song").unwrap();
 /// assert_eq!(song.title, "Amazing Grace");
 /// ```
 pub fn import_song_from_file(file_path: &str) -> Result<Song, Box<dyn Error>> {
@@ -153,7 +153,7 @@ mod test {
     #[test]
     /// This test tests a song import from a file with a title tag.
     fn test_import_song_with_title_tag_from_file() {
-        let song = import_song_from_file("testfiles/Amazing Grace.song").unwrap();
+        let song = import_song_from_file("tests/data/Amazing Grace.song").unwrap();
         assert_eq!(song.title, "Amazing Grace");
     }
 
@@ -161,7 +161,7 @@ mod test {
     /// This test tests a song import from a file without a title tag.
     /// The title is derived from the filename.
     fn test_import_song_without_title_tag_from_file() {
-        let song = import_song_from_file("testfiles/What a friend we have in Jesus.song").unwrap();
+        let song = import_song_from_file("tests/data/What a friend we have in Jesus.song").unwrap();
         assert_eq!(song.title, "What a friend we have in Jesus");
     }
 
@@ -170,7 +170,7 @@ mod test {
     /// The function should return an error.
     /// The error should be of type CantaraImportUnknownFileExtensionError.
     fn test_import_song_with_unknown_file_extension_from_file() {
-        let result = import_song_from_file("testfiles/What a friend we have in Jesus.txt");
+        let result = import_song_from_file("tests/data/What a friend we have in Jesus.txt");
         assert!(result.is_err());
         let error: Box<dyn Error> = result.err().unwrap();
         assert_eq!(error.to_string(), "Unknown file extension: txt");
@@ -178,7 +178,7 @@ mod test {
 
     #[test]
     fn test_create_songfile_which_does_not_exist() {
-        let result = SongFile::new("testfiles/A Non Existing File.txt");
+        let result = SongFile::new("tests/data/A Non Existing File.txt");
         assert_eq!(result.unwrap_err(), CantaraFileDoesNotExistError);
     }
 }

@@ -1,16 +1,14 @@
 //! This module handles the loading of `.song.yml` (YAML-based song) files.
 //! It deserializes YAML into intermediate structs, then converts them into the Song data model.
 
-use std::cell::RefCell;
 use std::collections::HashMap;
 use std::error::Error;
-use std::rc::Rc;
 
 use serde::Deserialize;
 
 use crate::song::{
-    LyricLanguage, PartOrder, PartOrderName, PartOrderRule, Song, SongPart, SongPartContent,
-    SongPartContentType, SongPartType,
+    LyricLanguage, PartOrder, PartOrderName, PartOrderRule, Song, SongPartContent,
+    SongPartContentType, SongPartId, SongPartType,
 };
 
 // --- Intermediate YAML deserialization structs ---
@@ -78,29 +76,22 @@ fn song_from_yml(yml: SongYmlFile) -> Result<Song, Box<dyn Error>> {
     let mut song = Song::new(&yml.title);
     song.default_language = yml.default_language.clone();
 
-    // Store tags
     for (key, value) in &yml.tags {
-        song.add_tag(key, value);
+        song.set_tag(key, value);
     }
 
-    // Store score metadata as tags (so they're accessible via get_tag)
-    if let Some(ref score) = yml.score {
-        if let Some(ref key) = score.key {
-            song.add_tag("key", key);
-        }
-        if let Some(ref time) = score.time {
-            song.add_tag("time", time);
-        }
-        if let Some(partial) = score.partial {
-            song.add_tag("partial", &partial.to_string());
-        }
+    // The `score:` block holds notation settings, not free-form metadata, so it
+    // gets its own typed home on the song.
+    if let Some(score) = &yml.score {
+        song.score.key = score.key.clone();
+        song.score.time = score.time.clone();
+        song.score.partial = score.partial;
     }
 
-    // Process parts
     for yml_part in &yml.parts {
-        let part_type = SongPartType::from_string(&yml_part.part_type);
+        // `from_str` for SongPartType is infallible.
+        let part_type: SongPartType = yml_part.part_type.parse().unwrap();
 
-        // Separate voice contents from lyrics contents
         let voice_contents: Vec<&SongYmlContent> = yml_part
             .contents
             .iter()
@@ -120,66 +111,57 @@ fn song_from_yml(yml: SongYmlFile) -> Result<Song, Box<dyn Error>> {
             .collect();
 
         if lyrics_contents.is_empty() {
-            // Part with no lyrics (e.g. an instrumental intro) — create one part with voice only
-            let number = 1u32;
-            let part_ref = song.add_part_of_type(part_type, Some(number));
-            let mut part = part_ref.borrow_mut();
-            for vc in &voice_contents {
-                part.add_content(map_voice_content(vc));
+            // A part without lyrics (e.g. an instrumental intro) becomes a
+            // single part carrying just the music.
+            let id = song.add_part_of_type(part_type, Some(1));
+            let part = song.part_mut(&id).unwrap();
+            for voice in &voice_contents {
+                part.add_content(map_voice_content(voice));
             }
             continue;
         }
 
-        // For each numbered lyrics entry, create a SongPart.
-        // The first one gets the voice content; subsequent ones reference it via is_repetition_of.
-        let mut first_part_ref: Option<Rc<RefCell<SongPart>>> = None;
+        // Each numbered lyrics entry becomes a part of its own. The first one
+        // carries the music; the others reference it, so the melody is stored
+        // exactly once.
+        let mut first_id: Option<SongPartId> = None;
 
         for lyrics in &lyrics_contents {
-            let number = lyrics.number.unwrap_or(1);
-            let part_ref = song.add_part_of_type(part_type, Some(number));
+            let id = song.add_part_of_type(part_type, lyrics.number);
 
-            {
-                let mut part = part_ref.borrow_mut();
+            // Determine the lyrics language, falling back to the song default.
+            let language = match &lyrics.language {
+                Some(code) => LyricLanguage::specific(code),
+                None => match &yml.default_language {
+                    Some(default) => LyricLanguage::specific(default),
+                    None => LyricLanguage::Default,
+                },
+            };
 
-                // Add voice content to the first part only
-                if first_part_ref.is_none() {
-                    for vc in &voice_contents {
-                        part.add_content(map_voice_content(vc));
-                    }
-                    for cc in &chord_contents {
-                        part.add_content(SongPartContent {
-                            voice_type: SongPartContentType::Chords,
-                            content: cc.content.trim().to_string(),
-                        });
-                    }
+            let part = song.part_mut(&id).unwrap();
+
+            if first_id.is_none() {
+                for voice in &voice_contents {
+                    part.add_content(map_voice_content(voice));
                 }
-
-                // Determine the lyrics language
-                let language = match &lyrics.language {
-                    Some(lang) => LyricLanguage::Specific(lang.clone()),
-                    None => match &yml.default_language {
-                        Some(default_lang) => LyricLanguage::Specific(default_lang.clone()),
-                        None => LyricLanguage::Default,
-                    },
-                };
-
-                part.add_content(SongPartContent {
-                    voice_type: SongPartContentType::Lyrics { language },
-                    content: lyrics.content.trim().to_string(),
-                });
+                for chords in &chord_contents {
+                    part.add_content(SongPartContent::new(
+                        SongPartContentType::Chords,
+                        chords.content.trim(),
+                    ));
+                }
+            } else {
+                part.is_repetition_of = first_id;
             }
 
-            // Set is_repetition_of for subsequent parts
-            if let Some(ref first_ref) = first_part_ref {
-                let cloned: Rc<RefCell<SongPart>> = first_ref.clone();
-                part_ref.borrow_mut().set_repition(Some(cloned));
-            } else {
-                first_part_ref = Some(part_ref.clone());
+            part.add_content(SongPartContent::lyrics(language, lyrics.content.trim()));
+
+            if first_id.is_none() {
+                first_id = Some(id);
             }
         }
     }
 
-    // Process orders
     for yml_order in &yml.orders {
         match yml_order {
             SongYmlOrder::Standard(pattern) => {
@@ -190,32 +172,35 @@ fn song_from_yml(yml: SongYmlFile) -> Result<Song, Box<dyn Error>> {
                     "refrain-stanza-refrain" | "refrain-verse-refrain" | "chorus-verse-chorus" => {
                         PartOrderRule::RefrainVerseBridgeRefrain
                     }
-                    _ => {
-                        // Unknown pattern, fall back to guessing
-                        continue;
-                    }
+                    // Unknown pattern — fall back to guessing further down.
+                    _ => continue,
                 };
-                song.part_orders.push(PartOrder::new(
-                    PartOrderName::Default,
-                    rule,
-                ));
+                song.part_orders
+                    .push(PartOrder::new(PartOrderName::Default, rule));
             }
             SongYmlOrder::Custom { name, parts } => {
-                let mut part_refs: Vec<Rc<RefCell<SongPart>>> = Vec::new();
-                for part_id_str in parts {
-                    if let Some(part_ref) = song.get_part_by_id(part_id_str) {
-                        part_refs.push(part_ref);
+                // Part ids are parsed, not compared as strings, so `verse.1`,
+                // `Verse.1` and `stanza.1` all refer to the same part.
+                let mut ids: Vec<SongPartId> = Vec::new();
+                for text in parts {
+                    let id: SongPartId = text.parse()?;
+                    if song.part(&id).is_none() {
+                        return Err(format!(
+                            "the order '{}' refers to '{}', which the song does not contain",
+                            name, id
+                        )
+                        .into());
                     }
+                    ids.push(id);
                 }
                 song.part_orders.push(PartOrder::new(
                     PartOrderName::Custom(name.clone()),
-                    PartOrderRule::Custom(part_refs),
+                    PartOrderRule::Custom(ids),
                 ));
             }
         }
     }
 
-    // If no orders were specified, add a guessed one
     if song.part_orders.is_empty() {
         song.add_guessed_part_order();
     }
@@ -225,7 +210,7 @@ fn song_from_yml(yml: SongYmlFile) -> Result<Song, Box<dyn Error>> {
 
 /// Map a YAML voice content entry to a SongPartContent
 fn map_voice_content(vc: &SongYmlContent) -> SongPartContent {
-    let voice_type = match vc.content_type.as_str() {
+    let content_type = match vc.content_type.as_str() {
         "voice" | "lead" => SongPartContentType::LeadVoice,
         "soprano" => SongPartContentType::SupranoVoice,
         "alto" => SongPartContentType::AltoVoice,
@@ -236,10 +221,7 @@ fn map_voice_content(vc: &SongYmlContent) -> SongPartContent {
         _ => SongPartContentType::LeadVoice,
     };
 
-    SongPartContent {
-        voice_type,
-        content: vc.content.trim().to_string(),
-    }
+    SongPartContent::new(content_type, vc.content.trim())
 }
 
 #[cfg(test)]
@@ -248,34 +230,109 @@ mod tests {
 
     #[test]
     fn test_parse_amazing_grace_yml() {
-        let content = std::fs::read_to_string("testfiles/Amazing Grace.song.yml").unwrap();
+        let content = std::fs::read_to_string("tests/data/Amazing Grace.song.yml").unwrap();
         let song = import_from_yml_string(&content).unwrap();
 
         assert_eq!(song.title, "Amazing Grace");
         assert_eq!(song.default_language, Some("en".to_string()));
-        assert_eq!(song.get_tag("author").unwrap(), "John Newton");
-        assert_eq!(song.get_tag("bible").unwrap(), "John 3:16");
-        assert_eq!(song.get_tag("key").unwrap(), "f major");
-        assert_eq!(song.get_tag("time").unwrap(), "3/4");
-        assert_eq!(song.get_tag("partial").unwrap(), "4");
+        assert_eq!(song.tag("author").unwrap(), "John Newton");
+        assert_eq!(song.tag("bible").unwrap(), "John 3:16");
+        assert_eq!(song.score.key.as_ref().unwrap(), "f major");
+        assert_eq!(song.score.time.as_ref().unwrap(), "3/4");
+        assert_eq!(song.score.partial.unwrap(), 4);
 
         // 3 verses
-        assert_eq!(song.get_part_count(SongPartType::Verse), 3);
+        assert_eq!(song.part_count_of_type(SongPartType::Verse), 3);
 
-        // First verse should have voice + lyrics
-        let verse1 = song.get_part_by_id("Verse.1").unwrap();
-        let v1 = verse1.borrow();
-        assert!(v1.contents.len() >= 2); // voice + lyrics
-        assert!(v1.is_repetition_of.is_none());
+        // The first verse carries the melody and the lyrics.
+        let verse1 = song.part(&"verse.1".parse().unwrap()).unwrap();
+        assert!(verse1.contents.len() >= 2);
+        assert!(verse1.is_repetition_of.is_none());
+        assert!(verse1.own_voice().is_some());
 
-        // Second verse should reference the first via is_repetition_of
-        let verse2 = song.get_part_by_id("Verse.2").unwrap();
-        let v2 = verse2.borrow();
-        assert!(v2.is_repetition_of.is_some());
+        // Later verses only reference it, so the melody is stored once.
+        let verse2 = song.part(&"verse.2".parse().unwrap()).unwrap();
+        assert_eq!(verse2.is_repetition_of, Some(verse1.id()));
+        assert!(verse2.own_voice().is_none());
+        assert!(song.voice_for_part(verse2).is_some());
+    }
 
-        // Voice content should be findable via get_voice_for_part
-        let voice = song.get_voice_for_part(&v2);
-        assert!(voice.is_some());
+    /// A named order in the YAML file used to resolve to nothing because part
+    /// ids were compared as case-sensitive strings.
+    #[test]
+    fn test_named_custom_order_resolves() {
+        let yml = r#"
+version: 0.1
+title: Custom Order
+orders:
+  - name: short
+    parts: [verse.1, refrain.1]
+parts:
+  - type: verse
+    contents:
+    - type: lyrics
+      number: 1
+      content: one
+  - type: refrain
+    contents:
+    - type: lyrics
+      number: 1
+      content: two
+"#;
+        let song = import_from_yml_string(yml).unwrap();
+        let order = song.part_orders.first().unwrap();
+        assert_eq!(order.name, PartOrderName::Custom("short".to_string()));
+
+        let ids: Vec<String> = order
+            .to_parts(&song)
+            .iter()
+            .map(|part| part.id().to_string())
+            .collect();
+        assert_eq!(ids, ["verse.1", "refrain.1"]);
+    }
+
+    #[test]
+    fn test_named_order_with_unknown_part_is_an_error() {
+        let yml = r#"
+version: 0.1
+title: Bad Order
+orders:
+  - name: short
+    parts: [verse.1, refrain.9]
+parts:
+  - type: verse
+    contents:
+    - type: lyrics
+      number: 1
+      content: one
+"#;
+        let error = import_from_yml_string(yml).unwrap_err().to_string();
+        assert!(error.contains("refrain.9"), "unexpected error: {}", error);
+    }
+
+    #[test]
+    fn test_lyrics_language_falls_back_to_the_song_default() {
+        let yml = r#"
+version: 0.1
+title: Languages
+default_language: de
+parts:
+  - type: verse
+    contents:
+    - type: lyrics
+      number: 1
+      content: Hallo
+    - type: lyrics
+      number: 2
+      language: EN
+      content: Hello
+"#;
+        let song = import_from_yml_string(yml).unwrap();
+        // Language codes are normalised, so "EN" and "en" are the same.
+        assert_eq!(song.available_languages(), ["de", "en"]);
+
+        let verse2 = song.part(&"verse.2".parse().unwrap()).unwrap();
+        assert_eq!(verse2.lyrics_for(Some("en"), Some("de")).unwrap().content, "Hello");
     }
 
     #[test]
@@ -293,6 +350,6 @@ parts:
 "#;
         let song = import_from_yml_string(yml).unwrap();
         assert_eq!(song.title, "Minimal Song");
-        assert_eq!(song.get_part_count(SongPartType::Verse), 1);
+        assert_eq!(song.part_count_of_type(SongPartType::Verse), 1);
     }
 }

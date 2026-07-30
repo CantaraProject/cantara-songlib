@@ -7,14 +7,14 @@ fn main() {
     println!("=== ABC Notation Export Demo ===\n");
     
     // Load Amazing Grace from YAML
-    let content = std::fs::read_to_string("testfiles/Amazing Grace.song.yml")
+    let content = std::fs::read_to_string("tests/data/Amazing Grace.song.yml")
         .expect("Failed to read test file");
     
     let song = song_yml::import_from_yml_string(&content)
         .expect("Failed to parse YAML");
     
     println!("Loaded song: {}", song.title);
-    println!("Author: {:?}", song.get_tag("author"));
+    println!("Author: {:?}", song.tag("author"));
     println!();
     
     // Export to ABC notation with default settings

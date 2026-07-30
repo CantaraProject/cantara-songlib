@@ -1,7 +1,6 @@
 //! Here the logic for the slides is implemented
 
 use serde::{Deserialize, Serialize};
-use std::cmp::min;
 
 use crate::importer::SongFile;
 use crate::song::Song;
@@ -391,8 +390,7 @@ pub fn wrap_blocks(
             continue;
         }
         if wrapped_blocks[0][block_index].len() > maximum_lines {
-            // Determine the desired size of the first part: balance roughly in half, but do not exceed maximum_lines
-            let total_lines = wrapped_blocks[0][block_index].len();
+            // The first part takes as many lines as it is allowed to.
             let target_first_len = maximum_lines;
 
             // Determine whether we should insert a new block placeholder after the current one
@@ -407,9 +405,9 @@ pub fn wrap_blocks(
             // Determine destination index for moved lines
             // - If persistence is true or there was no next, move lines into the newly created block at index+1
             // - If persistence is false and a next block exists, move lines into the original next block which is now at index+2
-            let merging_into_existing_next = !persistence && has_next;
-            // In non-persistent mode with an existing next, we'll still insert a placeholder at index+1
-            // and merge overflow into this new block, then append the original next block to it.
+            // In non-persistent mode with an existing next block we still insert
+            // a placeholder at index+1, merge the overflow into it and append
+            // the original next block afterwards.
             let destination_index = block_index + 1;
 
             let mut moved_line_count = 0;

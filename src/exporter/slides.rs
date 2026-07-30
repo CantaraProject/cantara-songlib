@@ -5,7 +5,7 @@
 use std::collections::HashMap;
 
 use crate::slides::{wrap_blocks, LanguageConfiguration, Slide, SlideSettings};
-use crate::song::{LyricLanguage, Song, SongPartContentType};
+use crate::song::{LyricLanguage, Song, SongPart};
 use crate::templating::render_metadata;
 
 /// Strip LilyPond lyric markup from lyrics text for presentation display.
@@ -53,51 +53,16 @@ fn strip_lilypond_markers_in_line(line: &str) -> String {
     kept.join(" ")
 }
 
-/// Find lyrics content for a single language in a song part's contents.
-/// Tries to match the requested language first, then falls back to default/first lyrics.
-fn find_lyrics_for_language<'a>(
-    contents: &'a [crate::song::SongPartContent],
-    language: &Option<String>,
-    default_language: &Option<String>,
-) -> Option<&'a crate::song::SongPartContent> {
-    // If a specific language is requested, try to find it
-    let target_lang = language.as_ref().or(default_language.as_ref());
-
-    if let Some(lang) = target_lang {
-        let found = contents.iter().find(|c| match &c.voice_type {
-            SongPartContentType::Lyrics {
-                language: LyricLanguage::Specific(l),
-            } => l == lang,
-            _ => false,
-        });
-        if found.is_some() {
-            return found;
-        }
-    }
-
-    // Fall back to first lyrics
-    contents.iter().find(|c| c.voice_type.is_lyrics())
-}
-
-/// Find lyrics content for multiple languages in a song part's contents.
-/// Returns one lyrics string per requested language, in the order specified.
-fn find_lyrics_for_languages(
-    contents: &[crate::song::SongPartContent],
-    languages: &[String],
-) -> Vec<String> {
+/// Lyrics of a part in several languages, one entry per requested language and
+/// in the order they were requested.
+///
+/// Languages the part has no text for are skipped rather than padded, so a
+/// slide never shows an empty block.
+fn find_lyrics_for_languages(part: &SongPart, languages: &[String]) -> Vec<String> {
     languages
         .iter()
-        .filter_map(|lang| {
-            contents
-                .iter()
-                .find(|c| match &c.voice_type {
-                    SongPartContentType::Lyrics {
-                        language: LyricLanguage::Specific(l),
-                    } => l == lang,
-                    _ => false,
-                })
-                .map(|c| strip_lilypond_markers(&c.content))
-        })
+        .filter_map(|language| part.lyrics_in(&LyricLanguage::specific(language)))
+        .map(|content| strip_lilypond_markers(&content.content))
         .collect()
 }
 
@@ -105,7 +70,7 @@ fn find_lyrics_for_languages(
 /// If the requested list is empty, returns all languages available in the song.
 fn resolve_multi_languages(song: &Song, requested: &[String]) -> Vec<String> {
     if requested.is_empty() {
-        song.get_available_languages()
+        song.available_languages()
     } else {
         requested.to_vec()
     }
@@ -113,7 +78,11 @@ fn resolve_multi_languages(song: &Song, requested: &[String]) -> Vec<String> {
 
 /// Build metadata text from song tags using the template in settings.
 fn build_meta_text(song: &Song, settings: &SlideSettings) -> Option<String> {
-    let mut metadata: HashMap<String, String> = song.get_tags().clone();
+    let mut metadata: HashMap<String, String> = song
+        .tags()
+        .iter()
+        .map(|(key, value)| (key.clone(), value.clone()))
+        .collect();
     metadata.insert("title".to_string(), song.title.clone());
     match render_metadata(&settings.meta_syntax, &metadata) {
         Ok(ref s) if !s.is_empty() => Some(s.clone()),
@@ -141,20 +110,6 @@ fn meta_for_position(
     })
 }
 
-/// Get ordered parts for the song.
-fn get_ordered_parts(
-    song: &Song,
-) -> Vec<std::rc::Rc<std::cell::RefCell<crate::song::SongPart>>> {
-    if let Some(order) = song.part_orders.first() {
-        order.to_parts(song)
-    } else {
-        song.get_unpacked_parts()
-            .into_iter()
-            .map(|p| std::rc::Rc::new(std::cell::RefCell::new(p)))
-            .collect()
-    }
-}
-
 /// Generate single-language presentation slides from a Song.
 fn generate_single_language_slides(
     song: &Song,
@@ -168,13 +123,12 @@ fn generate_single_language_slides(
         slides.push(Slide::new_title_slide(song.title.clone(), meta_text.clone()));
     }
 
-    let ordered_parts = get_ordered_parts(song);
+    let ordered_parts = song.ordered_parts();
 
     let mut blocks: Vec<Vec<String>> = Vec::new();
-    for part_ref in &ordered_parts {
-        let part = part_ref.borrow();
+    for part in &ordered_parts {
         let lyrics_content =
-            find_lyrics_for_language(&part.contents, language, &song.default_language);
+            part.lyrics_for(language.as_deref(), song.default_language.as_deref());
         if let Some(content) = lyrics_content {
             let cleaned = strip_lilypond_markers(&content.content);
             let lines: Vec<String> = cleaned.lines().map(|l| l.to_string()).collect();
@@ -234,15 +188,14 @@ fn generate_multi_language_slides(
         slides.push(Slide::new_title_slide(song.title.clone(), meta_text.clone()));
     }
 
-    let ordered_parts = get_ordered_parts(song);
+    let ordered_parts = song.ordered_parts();
 
     // Collect per-part multi-language blocks.
     // Each entry is a Vec<String> with one text block per language.
     let mut multi_blocks: Vec<Vec<String>> = Vec::new();
 
-    for part_ref in &ordered_parts {
-        let part = part_ref.borrow();
-        let texts = find_lyrics_for_languages(&part.contents, &languages);
+    for part in &ordered_parts {
+        let texts = find_lyrics_for_languages(part, &languages);
         if !texts.is_empty() {
             multi_blocks.push(texts);
         }
@@ -298,7 +251,7 @@ mod tests {
 
     #[test]
     fn test_slides_from_yml_song() {
-        let content = std::fs::read_to_string("testfiles/Amazing Grace.song.yml").unwrap();
+        let content = std::fs::read_to_string("tests/data/Amazing Grace.song.yml").unwrap();
         let song = song_yml::import_from_yml_string(&content).unwrap();
 
         let settings = SlideSettings {
@@ -328,7 +281,7 @@ mod tests {
 
     #[test]
     fn test_single_language_specific() {
-        let content = std::fs::read_to_string("testfiles/Amazing Grace.song.yml").unwrap();
+        let content = std::fs::read_to_string("tests/data/Amazing Grace.song.yml").unwrap();
         let song = song_yml::import_from_yml_string(&content).unwrap();
 
         let settings = SlideSettings {
@@ -353,7 +306,7 @@ mod tests {
 
     #[test]
     fn test_multi_language_all() {
-        let content = std::fs::read_to_string("testfiles/Amazing Grace.song.yml").unwrap();
+        let content = std::fs::read_to_string("tests/data/Amazing Grace.song.yml").unwrap();
         let song = song_yml::import_from_yml_string(&content).unwrap();
 
         let settings = SlideSettings {

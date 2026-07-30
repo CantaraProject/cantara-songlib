@@ -259,7 +259,7 @@ fn indent_lines(text: &str, prefix: &str) -> String {
 fn find_own_voice(part: &SongPart) -> Option<&SongPartContent> {
     part.contents.iter().find(|c| {
         matches!(
-            c.voice_type,
+            c.content_type,
             SongPartContentType::LeadVoice
                 | SongPartContentType::SupranoVoice
                 | SongPartContentType::AltoVoice
@@ -271,7 +271,7 @@ fn find_own_voice(part: &SongPart) -> Option<&SongPartContent> {
 
 /// Find the first lyrics content in a part.
 fn find_lyrics(part: &SongPart) -> Option<&SongPartContent> {
-    part.contents.iter().find(|c| c.voice_type.is_lyrics())
+    part.contents.iter().find(|c| c.content_type.is_lyrics())
 }
 
 /// Count how many syllable slots a `\lyricmode` block occupies.
@@ -339,15 +339,15 @@ fn build_font_block(font: &FontSetting) -> Option<String> {
 /// Build the global content string (key, time, partial) from song tags.
 fn build_global_content(song: &Song) -> String {
     let mut global_lines: Vec<String> = Vec::new();
-    if let Some(key_str) = song.get_tag("key") {
+    if let Some(key_str) = song.score.key.as_ref() {
         if let Some(ly_key) = format_lilypond_key(key_str) {
             global_lines.push(ly_key);
         }
     }
-    if let Some(time_str) = song.get_tag("time") {
+    if let Some(time_str) = song.score.time.as_ref() {
         global_lines.push(format!("\\time {}", time_str));
     }
-    if let Some(partial_str) = song.get_tag("partial") {
+    if let Some(partial_str) = song.score.partial {
         global_lines.push(format!("\\partial {}", partial_str));
     }
     indent_lines(&global_lines.join("\n"), "  ")
@@ -549,16 +549,16 @@ global = {
 ///
 /// Returns an error if the song has no voice content to export.
 pub fn lilypond_from_song(song: &Song, settings: &LilypondSettings) -> Result<String, String> {
-    let parts = song.get_unpacked_parts();
+    let parts = song.parts();
 
     // --- Step 1: Find the stanza (verse) voice ---
     let stanza_voice = parts
         .iter()
         .filter(|p| p.part_type == SongPartType::Verse)
-        .find_map(|part| song.get_voice_for_part(part))
+        .find_map(|part| song.voice_for_part(part))
         .ok_or_else(|| "Song has no voice content for LilyPond export".to_string())?;
 
-    let base_voice_name = voice_type_to_var_name(&stanza_voice.voice_type).to_string();
+    let base_voice_name = voice_type_to_var_name(&stanza_voice.content_type).to_string();
     let voice_part_name = format!("{}Part", base_voice_name);
     let voice_part_ref = format!("\\{}", voice_part_name);
 
@@ -653,7 +653,7 @@ pub fn lilypond_from_song(song: &Song, settings: &LilypondSettings) -> Result<St
 
     for part in &verse_parts_sorted {
         for content in &part.contents {
-            if content.voice_type.is_lyrics() {
+            if content.content_type.is_lyrics() {
                 let var_name = format!("verse{}", number_to_word(verse_number));
                 verse_refs.push(format!("\\{}", var_name));
                 lyric_defs.push(LyricsDefinition {
@@ -733,7 +733,7 @@ pub fn lilypond_from_song(song: &Song, settings: &LilypondSettings) -> Result<St
         let mut refrain_number: u32 = 1;
         for part in &refrain_parts {
             for content in &part.contents {
-                if content.voice_type.is_lyrics() {
+                if content.content_type.is_lyrics() {
                     let var_name = format!("refrain{}", number_to_word(refrain_number));
                     lyric_lines.push(LyricLine {
                         refs: format!("\\{}", var_name),
@@ -753,7 +753,7 @@ pub fn lilypond_from_song(song: &Song, settings: &LilypondSettings) -> Result<St
     let chord_content_opt = parts.iter().find_map(|part| {
         part.contents
             .iter()
-            .find(|c| matches!(c.voice_type, SongPartContentType::Chords))
+            .find(|c| matches!(c.content_type, SongPartContentType::Chords))
             .map(|c| c.content.clone())
     });
     let has_chords = chord_content_opt.is_some();
@@ -765,7 +765,7 @@ pub fn lilypond_from_song(song: &Song, settings: &LilypondSettings) -> Result<St
     let data = LilypondTemplateData {
         version: "2.24.0".to_string(),
         title: song.title.clone(),
-        composer: song.get_tag("author").cloned(),
+        composer: song.tag("author").cloned(),
         paper_size: settings.paper_size.clone(),
         layout_indent: settings.layout_indent.clone(),
         global_content,
@@ -803,16 +803,16 @@ pub fn lilypond_sequential_from_song(
     song: &Song,
     settings: &LilypondSettings,
 ) -> Result<String, String> {
-    let parts = song.get_unpacked_parts();
+    let parts = song.parts();
 
     // --- Find the stanza (verse) voice ---
     let stanza_voice = parts
         .iter()
         .filter(|p| p.part_type == SongPartType::Verse)
-        .find_map(|part| song.get_voice_for_part(part))
+        .find_map(|part| song.voice_for_part(part))
         .ok_or_else(|| "Song has no voice content for LilyPond export".to_string())?;
 
-    let base_voice_name = voice_type_to_var_name(&stanza_voice.voice_type).to_string();
+    let base_voice_name = voice_type_to_var_name(&stanza_voice.content_type).to_string();
 
     // --- Check refrain/chorus parts for their own independent voice ---
     let refrain_parts: Vec<_> = parts
@@ -870,7 +870,7 @@ pub fn lilypond_sequential_from_song(
 
     for part in &verse_parts_sorted {
         for content in &part.contents {
-            if content.voice_type.is_lyrics() {
+            if content.content_type.is_lyrics() {
                 let var_name = format!("verse{}", number_to_word(verse_number));
                 let var_ref = format!("\\{}", var_name);
                 verse_var_refs.push((verse_number, var_ref));
@@ -888,7 +888,7 @@ pub fn lilypond_sequential_from_song(
     let mut refrain_lyrics_ref: Option<String> = None;
     for part in &refrain_parts {
         for content in &part.contents {
-            if content.voice_type.is_lyrics() && refrain_lyrics_ref.is_none() {
+            if content.content_type.is_lyrics() && refrain_lyrics_ref.is_none() {
                 let var_name = "refrainLyrics".to_string();
                 let var_ref = format!("\\{}", var_name);
                 refrain_lyrics_ref = Some(var_ref);
@@ -948,7 +948,7 @@ pub fn lilypond_sequential_from_song(
     let data = SequentialTemplateData {
         version: "2.24.0".to_string(),
         title: song.title.clone(),
-        composer: song.get_tag("author").cloned(),
+        composer: song.tag("author").cloned(),
         paper_size: settings.paper_size.clone(),
         layout_indent: settings.layout_indent.clone(),
         global_content,
@@ -978,16 +978,16 @@ pub fn lilypond_parts_from_song(
     song: &Song,
     settings: &LilypondSettings,
 ) -> Result<Vec<LilypondPart>, String> {
-    let parts = song.get_unpacked_parts();
+    let parts = song.parts();
 
     // --- Find the stanza (verse) voice ---
     let stanza_voice = parts
         .iter()
         .filter(|p| p.part_type == SongPartType::Verse)
-        .find_map(|part| song.get_voice_for_part(part))
+        .find_map(|part| song.voice_for_part(part))
         .ok_or_else(|| "Song has no voice content for LilyPond export".to_string())?;
 
-    let base_voice_name = voice_type_to_var_name(&stanza_voice.voice_type).to_string();
+    let base_voice_name = voice_type_to_var_name(&stanza_voice.content_type).to_string();
 
     // --- Check refrain/chorus for own voice ---
     let refrain_parts: Vec<_> = parts
@@ -1029,7 +1029,7 @@ pub fn lilypond_parts_from_song(
     let mut verse_number: u32 = 1;
     for part in &verse_parts_sorted {
         for content in &part.contents {
-            if content.voice_type.is_lyrics() {
+            if content.content_type.is_lyrics() {
                 verse_lyrics.push((verse_number, content.content.clone()));
                 verse_number += 1;
             }
@@ -1289,7 +1289,7 @@ mod tests {
     #[test]
     fn test_lilypond_export_simple_verses() {
         // Amazing Grace: verses only, no refrain with its own melody
-        let content = std::fs::read_to_string("testfiles/Amazing Grace.song.yml").unwrap();
+        let content = std::fs::read_to_string("tests/data/Amazing Grace.song.yml").unwrap();
         let song = song_yml::import_from_yml_string(&content).unwrap();
 
         let ly_output = lilypond_from_song(&song, &LilypondSettings::default()).unwrap();
@@ -1337,7 +1337,7 @@ mod tests {
     fn test_lilypond_export_stanza_refrain() {
         // "Sei nicht stolz" has stanza voice + refrain voice (separate melodies)
         let content = std::fs::read_to_string(
-            "testfiles/Sei nicht stolz auf das, was du bist.song.yml",
+            "tests/data/Sei nicht stolz auf das, was du bist.song.yml",
         )
         .unwrap();
         let song = song_yml::import_from_yml_string(&content).unwrap();
@@ -1435,7 +1435,7 @@ mod tests {
 
     #[test]
     fn test_custom_settings() {
-        let content = std::fs::read_to_string("testfiles/Amazing Grace.song.yml").unwrap();
+        let content = std::fs::read_to_string("tests/data/Amazing Grace.song.yml").unwrap();
         let song = song_yml::import_from_yml_string(&content).unwrap();
 
         let settings = LilypondSettings {
@@ -1672,7 +1672,7 @@ parts:
         // "Sei nicht stolz" has separate stanza and refrain voices; the stanza voice
         // does NOT end with \bar "|." in the source, but the export should add it.
         let content = std::fs::read_to_string(
-            "testfiles/Sei nicht stolz auf das, was du bist.song.yml",
+            "tests/data/Sei nicht stolz auf das, was du bist.song.yml",
         )
         .unwrap();
         let song = song_yml::import_from_yml_string(&content).unwrap();
@@ -1698,7 +1698,7 @@ parts:
     #[test]
     fn test_final_bar_not_duplicated() {
         // Amazing Grace already has \bar "|." in source - should not be duplicated
-        let content = std::fs::read_to_string("testfiles/Amazing Grace.song.yml").unwrap();
+        let content = std::fs::read_to_string("tests/data/Amazing Grace.song.yml").unwrap();
         let song = song_yml::import_from_yml_string(&content).unwrap();
         let ly_output = lilypond_from_song(&song, &LilypondSettings::default()).unwrap();
 
@@ -1715,7 +1715,7 @@ parts:
         // "Sei nicht stolz" has separate stanza and refrain voices.
         // \global should only appear in the first voice definition.
         let content = std::fs::read_to_string(
-            "testfiles/Sei nicht stolz auf das, was du bist.song.yml",
+            "tests/data/Sei nicht stolz auf das, was du bist.song.yml",
         )
         .unwrap();
         let song = song_yml::import_from_yml_string(&content).unwrap();
@@ -1746,7 +1746,7 @@ parts:
     #[test]
     fn test_sequential_export_simple_verses() {
         // Amazing Grace: verses only → each verse gets its own \score
-        let content = std::fs::read_to_string("testfiles/Amazing Grace.song.yml").unwrap();
+        let content = std::fs::read_to_string("tests/data/Amazing Grace.song.yml").unwrap();
         let song = song_yml::import_from_yml_string(&content).unwrap();
 
         let ly = lilypond_sequential_from_song(&song, &LilypondSettings::default()).unwrap();
@@ -1791,7 +1791,7 @@ parts:
     fn test_sequential_export_stanza_refrain() {
         // "Sei nicht stolz" has stanza + refrain with separate melodies
         let content = std::fs::read_to_string(
-            "testfiles/Sei nicht stolz auf das, was du bist.song.yml",
+            "tests/data/Sei nicht stolz auf das, was du bist.song.yml",
         )
         .unwrap();
         let song = song_yml::import_from_yml_string(&content).unwrap();
@@ -1896,7 +1896,7 @@ parts:
     #[test]
     fn test_sequential_no_refrain_lyrics_when_no_refrain() {
         // Amazing Grace has no refrain → no refrainLyrics variable
-        let content = std::fs::read_to_string("testfiles/Amazing Grace.song.yml").unwrap();
+        let content = std::fs::read_to_string("tests/data/Amazing Grace.song.yml").unwrap();
         let song = song_yml::import_from_yml_string(&content).unwrap();
 
         let ly = lilypond_sequential_from_song(&song, &LilypondSettings::default()).unwrap();
@@ -1913,7 +1913,7 @@ parts:
 
     #[test]
     fn test_parts_export_simple_verses() {
-        let content = std::fs::read_to_string("testfiles/Amazing Grace.song.yml").unwrap();
+        let content = std::fs::read_to_string("tests/data/Amazing Grace.song.yml").unwrap();
         let song = song_yml::import_from_yml_string(&content).unwrap();
 
         let parts = lilypond_parts_from_song(&song, &LilypondSettings::default()).unwrap();
@@ -1946,7 +1946,7 @@ parts:
     #[test]
     fn test_parts_export_stanza_refrain() {
         let content = std::fs::read_to_string(
-            "testfiles/Sei nicht stolz auf das, was du bist.song.yml",
+            "tests/data/Sei nicht stolz auf das, was du bist.song.yml",
         )
         .unwrap();
         let song = song_yml::import_from_yml_string(&content).unwrap();
@@ -2023,7 +2023,7 @@ parts:
     #[test]
     fn test_parts_each_is_standalone() {
         // Each part LY should be independently compilable
-        let content = std::fs::read_to_string("testfiles/Amazing Grace.song.yml").unwrap();
+        let content = std::fs::read_to_string("tests/data/Amazing Grace.song.yml").unwrap();
         let song = song_yml::import_from_yml_string(&content).unwrap();
 
         let parts = lilypond_parts_from_song(&song, &LilypondSettings::default()).unwrap();
@@ -2066,7 +2066,7 @@ parts:
 
     #[test]
     fn test_font_setting_default_no_font_block() {
-        let content = std::fs::read_to_string("testfiles/Amazing Grace.song.yml").unwrap();
+        let content = std::fs::read_to_string("tests/data/Amazing Grace.song.yml").unwrap();
         let song = song_yml::import_from_yml_string(&content).unwrap();
 
         let ly = lilypond_from_song(&song, &LilypondSettings::default()).unwrap();
@@ -2085,7 +2085,7 @@ parts:
 
     #[test]
     fn test_font_setting_specific() {
-        let content = std::fs::read_to_string("testfiles/Amazing Grace.song.yml").unwrap();
+        let content = std::fs::read_to_string("tests/data/Amazing Grace.song.yml").unwrap();
         let song = song_yml::import_from_yml_string(&content).unwrap();
 
         let settings = LilypondSettings {
@@ -2109,7 +2109,7 @@ parts:
 
     #[test]
     fn test_staff_size_setting() {
-        let content = std::fs::read_to_string("testfiles/Amazing Grace.song.yml").unwrap();
+        let content = std::fs::read_to_string("tests/data/Amazing Grace.song.yml").unwrap();
         let song = song_yml::import_from_yml_string(&content).unwrap();
 
         let settings = LilypondSettings {
@@ -2127,7 +2127,7 @@ parts:
 
     #[test]
     fn test_font_and_staff_size_in_sequential() {
-        let content = std::fs::read_to_string("testfiles/Amazing Grace.song.yml").unwrap();
+        let content = std::fs::read_to_string("tests/data/Amazing Grace.song.yml").unwrap();
         let song = song_yml::import_from_yml_string(&content).unwrap();
 
         let settings = LilypondSettings {
@@ -2152,7 +2152,7 @@ parts:
 
     #[test]
     fn test_font_and_staff_size_in_parts() {
-        let content = std::fs::read_to_string("testfiles/Amazing Grace.song.yml").unwrap();
+        let content = std::fs::read_to_string("tests/data/Amazing Grace.song.yml").unwrap();
         let song = song_yml::import_from_yml_string(&content).unwrap();
 
         let settings = LilypondSettings {
@@ -2201,7 +2201,7 @@ parts:
             }
         };
 
-        let content = std::fs::read_to_string("testfiles/Amazing Grace.song.yml").unwrap();
+        let content = std::fs::read_to_string("tests/data/Amazing Grace.song.yml").unwrap();
         let song = song_yml::import_from_yml_string(&content).unwrap();
 
         let svg = render_paper_score_to_svg(&song, &LilypondSettings::default(), &lilypond_bin)
@@ -2225,7 +2225,7 @@ parts:
             }
         };
 
-        let content = std::fs::read_to_string("testfiles/Amazing Grace.song.yml").unwrap();
+        let content = std::fs::read_to_string("tests/data/Amazing Grace.song.yml").unwrap();
         let song = song_yml::import_from_yml_string(&content).unwrap();
 
         let pdf = render_paper_score_to_pdf(&song, &LilypondSettings::default(), &lilypond_bin)
@@ -2249,7 +2249,7 @@ parts:
             }
         };
 
-        let content = std::fs::read_to_string("testfiles/Amazing Grace.song.yml").unwrap();
+        let content = std::fs::read_to_string("tests/data/Amazing Grace.song.yml").unwrap();
         let song = song_yml::import_from_yml_string(&content).unwrap();
 
         let rendered =
@@ -2280,7 +2280,7 @@ parts:
             }
         };
 
-        let content = std::fs::read_to_string("testfiles/Amazing Grace.song.yml").unwrap();
+        let content = std::fs::read_to_string("tests/data/Amazing Grace.song.yml").unwrap();
         let song = song_yml::import_from_yml_string(&content).unwrap();
 
         let settings = LilypondSettings {
@@ -2307,7 +2307,7 @@ parts:
         };
 
         let content = std::fs::read_to_string(
-            "testfiles/Sei nicht stolz auf das, was du bist.song.yml",
+            "tests/data/Sei nicht stolz auf das, was du bist.song.yml",
         )
         .unwrap();
         let song = song_yml::import_from_yml_string(&content).unwrap();
