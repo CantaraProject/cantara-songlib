@@ -1,4 +1,4 @@
-//! ABC notation exporter — generates `.abc` files from a [`Song`].
+//! ABC notation exporter — generates `.abc` files from a [`crate::song::Song`].
 //!
 //! ABC is a text based music notation format that is widely supported by
 //! renderers such as `abcm2ps`, `abc2svg` and `abcjs`. This module translates
@@ -7,7 +7,7 @@
 //!
 //! The conversion works in three stages:
 //!
-//! 1. [`parse_voice`] turns the LilyPond input into a list of [`MusicEvent`]s.
+//! 1. `parse_voice` turns the LilyPond input into a list of `MusicEvent`s.
 //!    This resolves `\relative` octaves, LilyPond's duration memory (a note
 //!    without a duration inherits the previous one), accidentals (`fis`, `bes`,
 //!    …), ties, slurs and bar lines.
@@ -268,7 +268,7 @@ fn is_token_delimiter(c: char) -> bool {
     c.is_whitespace() || matches!(c, '|' | '(' | ')' | '<' | '>' | '\\' | '"' | '[' | ']')
 }
 
-/// Parse LilyPond voice content into a list of [`MusicEvent`]s.
+/// Parse LilyPond voice content into a list of `MusicEvent`s.
 ///
 /// The content is interpreted as if it were wrapped in `\relative c'`, which is
 /// how the LilyPond exporter emits it.
@@ -1024,11 +1024,10 @@ fn render_section(
     for (segment_index, (start, end, slots)) in segments.iter().enumerate() {
         let mut line = render_events(&section.events[*start..*end], key, unit, bar);
 
-        if segment_index == 0 {
-            if let Some(annotation) = &section.annotation {
+        if segment_index == 0
+            && let Some(annotation) = &section.annotation {
                 line = format!("\"^{}\" {}", annotation, line);
             }
-        }
 
         output.push_str(&line);
         output.push('\n');
@@ -1099,7 +1098,7 @@ fn render_section(
 fn find_own_voice(part: &SongPart) -> Option<&SongPartContent> {
     part.contents.iter().find(|content| {
         matches!(
-            content.voice_type,
+            content.content_type,
             SongPartContentType::LeadVoice
                 | SongPartContentType::SupranoVoice
                 | SongPartContentType::AltoVoice
@@ -1115,11 +1114,11 @@ fn build_header(song: &Song, settings: &AbcSettings) -> String {
     header.push_str("X:1\n");
     header.push_str(&format!("T:{}\n", song.title));
 
-    if let Some(author) = song.get_tag("author") {
+    if let Some(author) = song.tag("author") {
         header.push_str(&format!("C:{}\n", author));
     }
 
-    if let Some(time) = song.get_tag("time") {
+    if let Some(time) = song.score.time.as_ref() {
         header.push_str(&format!("M:{}\n", time));
     } else {
         header.push_str("M:none\n");
@@ -1128,7 +1127,9 @@ fn build_header(song: &Song, settings: &AbcSettings) -> String {
     header.push_str(&format!("L:{}\n", settings.unit_note_length));
 
     let key = song
-        .get_tag("key")
+        .score
+        .key
+        .as_ref()
         .map(|k| convert_key_to_abc(k))
         .unwrap_or_else(|| "C".to_string());
     header.push_str(&format!("K:{}\n", key));
@@ -1143,7 +1144,7 @@ fn build_header(song: &Song, settings: &AbcSettings) -> String {
 fn build_sections(song: &Song, settings: &AbcSettings) -> Result<Vec<Section>, String> {
     use crate::song::SongPartType;
 
-    let parts = song.get_unpacked_parts();
+    let parts = song.parts();
 
     let mut verse_parts: Vec<&SongPart> = parts
         .iter()
@@ -1160,8 +1161,8 @@ fn build_sections(song: &Song, settings: &AbcSettings) -> Result<Vec<Section>, S
     // refrain-only or single-block songs still export.
     let stanza_voice = verse_parts
         .iter()
-        .find_map(|part| song.get_voice_for_part(part))
-        .or_else(|| parts.iter().find_map(|part| song.get_voice_for_part(part)))
+        .find_map(|part| song.voice_for_part(part))
+        .or_else(|| parts.iter().find_map(|part| song.voice_for_part(part)))
         .ok_or_else(|| "Song has no voice content for ABC export".to_string())?;
 
     let refrain_voice: Option<&SongPartContent> =
@@ -1172,7 +1173,7 @@ fn build_sections(song: &Song, settings: &AbcSettings) -> Result<Vec<Section>, S
     let mut verse_number = 1u32;
     for part in &verse_parts {
         for content in &part.contents {
-            if content.voice_type.is_lyrics() {
+            if content.content_type.is_lyrics() {
                 verse_lyrics.push((
                     Some(format!("{}.", verse_number)),
                     lyrics_to_lines(&content.content),
@@ -1184,9 +1185,9 @@ fn build_sections(song: &Song, settings: &AbcSettings) -> Result<Vec<Section>, S
 
     // Songs without verse parts (e.g. a lyrics-only refrain) still need lyrics.
     if verse_lyrics.is_empty() {
-        for part in &parts {
+        for part in parts {
             for content in &part.contents {
-                if content.voice_type.is_lyrics() {
+                if content.content_type.is_lyrics() {
                     verse_lyrics.push((
                         Some(format!("{}.", verse_number)),
                         lyrics_to_lines(&content.content),
@@ -1207,7 +1208,7 @@ fn build_sections(song: &Song, settings: &AbcSettings) -> Result<Vec<Section>, S
         .find_map(|part| {
             part.contents
                 .iter()
-                .find(|content| content.voice_type.is_lyrics())
+                .find(|content| content.content_type.is_lyrics())
         })
         .map(|content| lyrics_to_lines(&content.content))
         .unwrap_or_default();
@@ -1248,7 +1249,7 @@ fn build_sections(song: &Song, settings: &AbcSettings) -> Result<Vec<Section>, S
     let refrain_first = song
         .part_orders
         .first()
-        .map_or(false, |order| order.is_refrain_first());
+        .is_some_and(|order| order.is_refrain_first());
 
     Ok(if refrain_first {
         vec![refrain_section, stanza_section]
@@ -1328,7 +1329,7 @@ fn insert_missing_barlines(sections: &mut [Section], bar_length: Frac, initial_f
 
 /// The length of one measure as a fraction of a whole note, from the `M:` tag.
 fn meter_bar_length(song: &Song) -> Frac {
-    match song.get_tag("time") {
+    match song.score.time.as_ref() {
         Some(time) => {
             let mut parts = time.trim().split('/');
             let beats: u32 = parts.next().and_then(|s| s.trim().parse().ok()).unwrap_or(0);
@@ -1345,7 +1346,7 @@ fn meter_bar_length(song: &Song) -> Frac {
 
 /// How much of the first measure the anacrusis leaves empty.
 fn initial_bar_fill(song: &Song, bar_length: Frac) -> Frac {
-    match song.get_tag("partial").and_then(|p| p.trim().parse::<u32>().ok()) {
+    match song.score.partial {
         Some(partial) if partial > 0 => bar_length.sub(Frac::new(1, partial)),
         _ => Frac::zero(),
     }
@@ -1372,7 +1373,226 @@ fn ensure_final_barline(sections: &mut [Section]) {
 // Public API
 // ---------------------------------------------------------------------------
 
-/// Generate a complete ABC notation file from a [`Song`].
+/// The music of one song part, cut into phrases along its lyrics lines.
+///
+/// This is what lets a presentation slide show the notes that belong to exactly
+/// the lyrics printed underneath them: ask for phrases `2..4` and you get a
+/// playable tune covering the third and fourth lyrics line, nothing more.
+///
+/// ```
+/// use cantara_songlib::exporter::abc::{AbcSettings, PartPhrases};
+/// use cantara_songlib::importer::song_yml;
+///
+/// let content = std::fs::read_to_string("tests/data/Amazing Grace.song.yml").unwrap();
+/// let song = song_yml::import_from_yml_string(&content).unwrap();
+/// let verse = song.part(&"verse.1".parse().unwrap()).unwrap();
+///
+/// let phrases = PartPhrases::of(&song, verse, &AbcSettings::default()).unwrap();
+/// assert_eq!(phrases.len(), 4); // "Amazing Grace" has four lines per verse
+///
+/// let excerpt = phrases.excerpt(0..2).unwrap();
+/// assert!(excerpt.starts_with("X:1"));
+/// ```
+pub struct PartPhrases {
+    events: Vec<MusicEvent>,
+    /// One `(start, end, syllables)` triple per lyrics line.
+    segments: Vec<(usize, usize, usize)>,
+    header: String,
+    unit: Frac,
+    key: [i8; 7],
+}
+
+impl PartPhrases {
+    /// Split a part's melody into phrases.
+    ///
+    /// The melody is looked up through [`Song::voice_for_part`], so a verse
+    /// that only references another verse's tune works too. Returns `None` when
+    /// no melody can be found.
+    ///
+    /// The phrase boundaries come from the part's own lyrics: a note that
+    /// continues a tie or sits inside a slur is a melisma and stays with the
+    /// preceding syllable, so counting syllables against notes lines up.
+    pub fn of(song: &Song, part: &SongPart, settings: &AbcSettings) -> Option<PartPhrases> {
+        let voice = song.voice_for_part(part)?;
+
+        let mut sections = [Section {
+            annotation: None,
+            events: parse_voice(&voice.content),
+            lyrics: Vec::new(),
+        }];
+
+        let bar_length = meter_bar_length(song);
+        insert_missing_barlines(&mut sections, bar_length, initial_bar_fill(song, bar_length));
+        ensure_final_barline(&mut sections);
+
+        let events = std::mem::take(&mut sections[0].events);
+
+        // The lyrics of the part itself define where the phrases end. Any
+        // language will do — every language of a part sings the same melody.
+        let reference: Vec<Vec<Syllable>> = part
+            .lyrics_for(None, song.default_language.as_deref())
+            .map(|content| lyrics_to_lines(&content.content))
+            .unwrap_or_default();
+
+        let segments = segment_events(&events, &reference);
+
+        let fifths = song.score.key.as_ref().map(|key| key_fifths(key)).unwrap_or(0);
+
+        Some(PartPhrases {
+            events,
+            segments,
+            header: build_excerpt_header(song, settings),
+            unit: parse_unit_note_length(&settings.unit_note_length),
+            key: key_alterations(fifths),
+        })
+    }
+
+    /// How many phrases the melody has — one per lyrics line.
+    pub fn len(&self) -> usize {
+        self.segments.len()
+    }
+
+    /// Whether the part has no phrases at all.
+    pub fn is_empty(&self) -> bool {
+        self.segments.is_empty()
+    }
+
+    /// How many syllables the phrase at `index` carries.
+    pub fn syllables(&self, index: usize) -> usize {
+        self.segments.get(index).map_or(0, |(_, _, count)| *count)
+    }
+
+    /// A standalone ABC tune covering the phrases in `lines`, notes only.
+    ///
+    /// Each phrase becomes one music line, so the notation breaks where the
+    /// lyrics break. Use [`PartPhrases::excerpt_with_lyrics`] to write the
+    /// words under the notes as well.
+    ///
+    /// Returns `None` for an empty or out-of-range request.
+    pub fn excerpt(&self, lines: std::ops::Range<usize>) -> Option<String> {
+        self.render_excerpt(lines, &[])
+    }
+
+    /// A standalone ABC tune covering the phrases in `lines`, with `lyrics`
+    /// written underneath the notes.
+    ///
+    /// `lyrics` is the text as the song stores it, with its `--` syllable
+    /// markers intact — those are what tell a syllable from a word. Line *i* of
+    /// the text goes under phrase *i*, so the notation ends up with as many
+    /// systems as the text has lines and breaks in the same places.
+    ///
+    /// A text line with fewer syllables than its phrase has notes is padded
+    /// with ABC's `*` skip marker so the remaining words stay under the right
+    /// notes. A line with more syllables is written out in full: because every
+    /// phrase carries its own `w:` line, the surplus cannot push the next line
+    /// out of place, and cutting it would show a mangled word.
+    ///
+    /// ```
+    /// use cantara_songlib::exporter::abc::{AbcSettings, PartPhrases};
+    /// use cantara_songlib::importer::song_yml;
+    ///
+    /// let content = std::fs::read_to_string("tests/data/Amazing Grace.song.yml").unwrap();
+    /// let song = song_yml::import_from_yml_string(&content).unwrap();
+    /// let verse = song.part(&"verse.1".parse().unwrap()).unwrap();
+    /// let lyrics = verse.lyrics_for(None, None).unwrap();
+    ///
+    /// let phrases = PartPhrases::of(&song, verse, &AbcSettings::default()).unwrap();
+    /// let abc = phrases.excerpt_with_lyrics(0..2, &lyrics.content).unwrap();
+    ///
+    /// // One music line and one lyrics line per phrase.
+    /// assert_eq!(abc.matches("w:").count(), 2);
+    /// assert!(abc.contains("w:A-ma-zing grace, How sweet the sound"));
+    /// ```
+    pub fn excerpt_with_lyrics(
+        &self,
+        lines: std::ops::Range<usize>,
+        lyrics: &str,
+    ) -> Option<String> {
+        self.render_excerpt(lines, &lyrics_to_lines(lyrics))
+    }
+
+    /// Render the phrases in `lines`, one music line each, optionally followed
+    /// by the matching `w:` line.
+    fn render_excerpt(
+        &self,
+        lines: std::ops::Range<usize>,
+        lyrics: &[Vec<Syllable>],
+    ) -> Option<String> {
+        if lines.start >= lines.end || lines.end > self.segments.len() {
+            return None;
+        }
+
+        // One accidental state for the whole excerpt: an accidental carries
+        // over a line break as long as the bar has not ended.
+        let mut bar = BarAccidentals::default();
+        let mut body = String::new();
+
+        for index in lines.clone() {
+            let (start, end, slots) = self.segments[index];
+            let music = render_events(&self.events[start..end], &self.key, self.unit, &mut bar);
+            if music.trim().is_empty() {
+                continue;
+            }
+
+            body.push_str(&music);
+            body.push('\n');
+
+            if let Some(line) = lyrics.get(index) {
+                let mut syllables: Vec<Syllable> = line.clone();
+                // Pad so that the remaining words stay under the right notes.
+                while syllables.len() < slots {
+                    syllables.push(Syllable {
+                        text: "*".to_string(),
+                        joined: false,
+                    });
+                }
+                if !syllables.is_empty() {
+                    body.push_str(&format!("w:{}\n", render_syllables(&syllables)));
+                }
+            }
+        }
+
+        if body.trim().is_empty() {
+            return None;
+        }
+
+        Some(format!("{}{}", self.header, body))
+    }
+
+    /// How many syllables the phrases in `lines` carry in total.
+    pub fn syllables_in(&self, lines: std::ops::Range<usize>) -> usize {
+        self.segments[lines.start.min(self.segments.len())..lines.end.min(self.segments.len())]
+            .iter()
+            .map(|(_, _, count)| count)
+            .sum()
+    }
+}
+
+/// The header of an excerpt tune.
+///
+/// Unlike a full export this leaves out `T:` and `C:` — a slide shows the title
+/// elsewhere, and an ABC renderer would print it above the staff.
+fn build_excerpt_header(song: &Song, settings: &AbcSettings) -> String {
+    let mut header = String::from("X:1\n");
+
+    match &song.score.time {
+        Some(time) => header.push_str(&format!("M:{}\n", time)),
+        None => header.push_str("M:none\n"),
+    }
+    header.push_str(&format!("L:{}\n", settings.unit_note_length));
+
+    let key = song
+        .score
+        .key
+        .as_ref()
+        .map(|key| convert_key_to_abc(key))
+        .unwrap_or_else(|| "C".to_string());
+    header.push_str(&format!("K:{}\n", key));
+
+    header
+}
+
+/// Generate a complete ABC notation file from a [`crate::song::Song`].
 ///
 /// The result contains the header fields, the melody and one `w:` lyrics line
 /// per verse aligned to the notes. If the refrain has its own melody it is
@@ -1383,7 +1603,7 @@ pub fn abc_from_song(song: &Song, settings: &AbcSettings) -> Result<String, Stri
     let mut output = build_header(song, settings);
 
     let unit = parse_unit_note_length(&settings.unit_note_length);
-    let fifths = song.get_tag("key").map(|k| key_fifths(k)).unwrap_or(0);
+    let fifths = song.score.key.as_ref().map(|k| key_fifths(k)).unwrap_or(0);
     let key = key_alterations(fifths);
 
     let mut sections = build_sections(song, settings)?;
@@ -1413,7 +1633,7 @@ pub fn abc_from_song_separated(song: &Song, settings: &AbcSettings) -> Result<St
     let mut output = build_header(song, settings);
 
     let unit = parse_unit_note_length(&settings.unit_note_length);
-    let fifths = song.get_tag("key").map(|k| key_fifths(k)).unwrap_or(0);
+    let fifths = song.score.key.as_ref().map(|k| key_fifths(k)).unwrap_or(0);
     let key = key_alterations(fifths);
 
     let mut sections = build_sections(song, settings)?;
@@ -1453,27 +1673,27 @@ pub fn abc_part_from_song(
     part_number: usize,
     settings: &AbcSettings,
 ) -> Result<String, String> {
-    let parts = song.get_unpacked_parts();
+    let parts = song.parts();
 
     let part = parts
         .get(part_number)
         .ok_or_else(|| format!("Part number {} out of range", part_number))?;
 
     let voice = song
-        .get_voice_for_part(part)
-        .ok_or_else(|| format!("Part {} has no voice content", part.id.get_id()))?;
+        .voice_for_part(part)
+        .ok_or_else(|| format!("Part {} has no voice content", part.id()))?;
 
     let unit = parse_unit_note_length(&settings.unit_note_length);
-    let fifths = song.get_tag("key").map(|k| key_fifths(k)).unwrap_or(0);
+    let fifths = song.score.key.as_ref().map(|k| key_fifths(k)).unwrap_or(0);
     let key_alter = key_alterations(fifths);
 
     let mut output = String::new();
     output.push_str(&format!("X:{}\n", part_number + 1));
-    output.push_str(&format!("T:{} - {}\n", song.title, part.id.get_id()));
-    if let Some(author) = song.get_tag("author") {
+    output.push_str(&format!("T:{} - {}\n", song.title, part.id()));
+    if let Some(author) = song.tag("author") {
         output.push_str(&format!("C:{}\n", author));
     }
-    if let Some(time) = song.get_tag("time") {
+    if let Some(time) = song.score.time.as_ref() {
         output.push_str(&format!("M:{}\n", time));
     } else {
         output.push_str("M:none\n");
@@ -1481,7 +1701,7 @@ pub fn abc_part_from_song(
     output.push_str(&format!("L:{}\n", settings.unit_note_length));
     output.push_str(&format!(
         "K:{}\n",
-        song.get_tag("key")
+        song.score.key.as_ref()
             .map(|k| convert_key_to_abc(k))
             .unwrap_or_else(|| "C".to_string())
     ));
@@ -1490,7 +1710,7 @@ pub fn abc_part_from_song(
     let lyrics: Vec<(Option<String>, Vec<Vec<Syllable>>)> = part
         .contents
         .iter()
-        .filter(|content| content.voice_type.is_lyrics())
+        .filter(|content| content.content_type.is_lyrics())
         .map(|content| (None, lyrics_to_lines(&content.content)))
         .collect();
 
@@ -1516,13 +1736,13 @@ mod tests {
     use crate::song::{LyricLanguage, Song, SongPartContent, SongPartContentType, SongPartType};
 
     fn amazing_grace() -> Song {
-        let content = std::fs::read_to_string("testfiles/Amazing Grace.song.yml").unwrap();
+        let content = std::fs::read_to_string("tests/data/Amazing Grace.song.yml").unwrap();
         song_yml::import_from_yml_string(&content).unwrap()
     }
 
     fn sei_nicht_stolz() -> Song {
         let content =
-            std::fs::read_to_string("testfiles/Sei nicht stolz auf das, was du bist.song.yml")
+            std::fs::read_to_string("tests/data/Sei nicht stolz auf das, was du bist.song.yml")
                 .unwrap();
         song_yml::import_from_yml_string(&content).unwrap()
     }
@@ -1687,17 +1907,17 @@ mod tests {
     fn test_accidental_only_emitted_when_needed() {
         // D major has F# in the key signature, so `fis` needs no accidental.
         let mut song = Song::new("Key Test");
-        song.add_tag("key", "d major");
-        song.add_tag("time", "4/4");
-        let part = song.add_part_of_type(SongPartType::Verse, Some(1));
+        song.score.key = Some("d major".to_string());
+        song.score.time = Some("4/4".to_string());
+        let id = song.add_part_of_type(SongPartType::Verse, Some(1));
         {
-            let mut part = part.borrow_mut();
+            let part = song.part_mut(&id).unwrap();
             part.add_content(SongPartContent {
-                voice_type: SongPartContentType::LeadVoice,
+                content_type: SongPartContentType::LeadVoice,
                 content: "fis4 f g a".to_string(),
             });
             part.add_content(SongPartContent {
-                voice_type: SongPartContentType::Lyrics {
+                content_type: SongPartContentType::Lyrics {
                     language: LyricLanguage::Default,
                 },
                 content: "one two three four".to_string(),
@@ -1971,11 +2191,11 @@ parts:
     #[test]
     fn test_abc_export_no_voice_error() {
         let mut song = Song::new("Test No Voice");
-        let part = song.add_part_of_type(SongPartType::Verse, Some(1));
+        let id = song.add_part_of_type(SongPartType::Verse, Some(1));
         {
-            let mut part = part.borrow_mut();
+            let part = song.part_mut(&id).unwrap();
             part.add_content(SongPartContent {
-                voice_type: SongPartContentType::Lyrics {
+                content_type: SongPartContentType::Lyrics {
                     language: LyricLanguage::Default,
                 },
                 content: "Test lyrics".to_string(),
@@ -2063,19 +2283,19 @@ parts:
     #[test]
     fn test_anacrusis_is_respected() {
         let mut song = Song::new("Pickup");
-        song.add_tag("key", "c major");
-        song.add_tag("time", "4/4");
-        song.add_tag("partial", "4");
-        let part = song.add_part_of_type(SongPartType::Verse, Some(1));
+        song.score.key = Some("c major".to_string());
+        song.score.time = Some("4/4".to_string());
+        song.score.partial = Some(4);
+        let id = song.add_part_of_type(SongPartType::Verse, Some(1));
         {
-            let mut part = part.borrow_mut();
+            let part = song.part_mut(&id).unwrap();
             part.add_content(SongPartContent {
-                voice_type: SongPartContentType::LeadVoice,
+                content_type: SongPartContentType::LeadVoice,
                 // One pickup note, then two full bars.
                 content: "g4 c4 d e f g a b c".to_string(),
             });
             part.add_content(SongPartContent {
-                voice_type: SongPartContentType::Lyrics {
+                content_type: SongPartContentType::Lyrics {
                     language: LyricLanguage::Default,
                 },
                 content: "a b c d e f g h i".to_string(),

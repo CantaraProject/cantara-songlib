@@ -47,10 +47,7 @@ pub fn get_title_from_file_content(content: &str) -> Option<String> {
     };
 
     // Get the title either from the content or the filename
-    match title_regex.captures(content) {
-        Some(title_captures) => Some(title_captures.get(1).unwrap().as_str().to_string()),
-        None => None
-    }
+    title_regex.captures(content).map(|title_captures| title_captures.get(1).unwrap().as_str().to_string())
 }
 
 pub fn get_filename_without_extension(path: &str) -> Option<&str> {
@@ -59,7 +56,8 @@ pub fn get_filename_without_extension(path: &str) -> Option<&str> {
         .and_then(|s| s.to_str()) // Converts OsStr to str
 }
 
-pub mod tests {
+#[cfg(test)]
+mod tests {
     use super::*;
 
     #[test]

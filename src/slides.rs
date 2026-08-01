@@ -1,7 +1,6 @@
 //! Here the logic for the slides is implemented
 
 use serde::{Deserialize, Serialize};
-use std::cmp::min;
 
 use crate::importer::SongFile;
 use crate::song::Song;
@@ -40,6 +39,8 @@ pub enum SlideContent {
     SingleLanguageMainContent(SingleLanguageMainContentSlide),
     Title(TitleSlide),
     MultiLanguageMainContent(MultiLanguageMainContentSlide),
+    /// Notation and any number of languages stacked on one slide
+    Complex(ComplexSlide),
     SimplePicture(SimplePictureSlide),
     Empty(EmptySlide),
     /// A slide that displays a single page from a PDF document
@@ -70,14 +71,8 @@ impl Slide {
             slide_content: SlideContent::SingleLanguageMainContent(
                 SingleLanguageMainContentSlide::new(
                     main_text.trim().to_string(),
-                    match spoiler_text {
-                        Some(string) => Some(string.trim().to_string()),
-                        None => None,
-                    },
-                    match meta_text {
-                        Some(string) => Some(string.trim().to_string()),
-                        None => None,
-                    },
+                    spoiler_text.map(|string| string.trim().to_string()),
+                    meta_text.map(|string| string.trim().to_string()),
                 ),
             ),
             linked_file: None,
@@ -88,10 +83,7 @@ impl Slide {
         Slide {
             slide_content: SlideContent::Title(TitleSlide {
                 title_text: title_text.trim().to_string(),
-                meta_text: match meta_text {
-                    Some(string) => Some(string.trim().to_string()),
-                    None => None,
-                },
+                meta_text: meta_text.map(|string| string.trim().to_string()),
             }),
             linked_file: None,
         }
@@ -138,6 +130,28 @@ impl Slide {
         }
     }
 
+    /// A slide showing notation and/or several languages stacked on top of one
+    /// another. See [`ComplexSlide`].
+    pub fn new_complex_slide(
+        rows: Vec<SlideRow>,
+        spoiler: Vec<SlideRow>,
+        meta_text: Option<String>,
+        line_count: usize,
+    ) -> Self {
+        Slide {
+            slide_content: SlideContent::Complex(ComplexSlide {
+                rows,
+                spoiler,
+                meta_text: match meta_text {
+                    Some(text) if !text.trim().is_empty() => Some(text.trim().to_string()),
+                    _ => None,
+                },
+                line_count,
+            }),
+            linked_file: None,
+        }
+    }
+
     pub fn with_song_file(self, linked_file: SongFile) -> Self {
         let mut cloned_self = self.clone();
         cloned_self.linked_file = Some(linked_file);
@@ -156,6 +170,7 @@ impl Slide {
                     .spoiler_text_vector
                     .is_empty()
             }
+            SlideContent::Complex(complex) => !complex.spoiler.is_empty(),
             SlideContent::SimplePicture(_) => false,
             SlideContent::Empty(_) => false,
             SlideContent::PdfPage(_) => false,
@@ -171,6 +186,7 @@ impl Slide {
             SlideContent::MultiLanguageMainContent(multi_language_main_content_slide) => {
                 multi_language_main_content_slide.meta_text.is_some()
             }
+            SlideContent::Complex(complex) => complex.meta_text.is_some(),
             SlideContent::SimplePicture(_) => false,
             SlideContent::Empty(_) => false,
             SlideContent::PdfPage(_) => false,
@@ -259,6 +275,184 @@ pub struct PdfPageSlide {
     pub page_number: u32,
 }
 
+/// A slide that stacks several representations of the same passage: the
+/// melody as notation and the lyrics in one or more languages.
+///
+/// Every row covers **the same passage of the song**. The notation row spans
+/// exactly the lyrics lines that the text rows below it show, so the notes and
+/// the words line up — that is the point of this slide type.
+///
+/// ```text
+/// ┌──────────────────────────────────────────────┐
+/// │ X:1 M:3/4 L:1/4 K:F  C | F2 (A/ F/) | A2 G … │  ← Notation row
+/// │ Amazing grace, how sweet the sound            │  ← Lyrics row "en"
+/// │ Oh teure Gnade wunderbar                      │  ← Lyrics row "de"
+/// │                                               │
+/// │ That saved a wretch like me.                  │  ← spoiler (text only)
+/// └──────────────────────────────────────────────┘
+/// ```
+#[derive(Clone, Serialize, Deserialize, PartialEq, Debug)]
+pub struct ComplexSlide {
+    /// The rows, in the order the user asked for them.
+    pub rows: Vec<SlideRow>,
+    /// A preview of the next slide. Text only — notation is not repeated
+    /// because a spoiler is meant to be small.
+    pub spoiler: Vec<SlideRow>,
+    /// Meta information, placed according to
+    /// [`crate::slides::ShowMetaInformation`].
+    pub meta_text: Option<String>,
+    /// How many lyrics lines of the song this slide covers.
+    ///
+    /// Every row spans these same lines, which is what makes the notation match
+    /// the text. Wrapping by [`SlideSettings::max_lines`] works on this count.
+    pub line_count: usize,
+}
+
+impl ComplexSlide {
+    /// The rows with nothing shown twice: the notation plus every lyrics row
+    /// whose text is *not* already printed under the notes.
+    ///
+    /// Use this for a layout that shows the notation with its words and does
+    /// not want the first language repeated underneath; use
+    /// [`ComplexSlide::rows`] to lay out everything yourself.
+    pub fn rows_without_repetition(&self) -> impl Iterator<Item = &SlideRow> {
+        self.rows.iter().filter(|row| !row.redundant)
+    }
+
+    /// The notation row, if this slide has one.
+    pub fn notation(&self) -> Option<&SlideRow> {
+        self.rows.iter().find(|row| row.is_notation())
+    }
+}
+
+/// One row of a [`ComplexSlide`].
+#[derive(Clone, Serialize, Deserialize, PartialEq, Debug)]
+pub struct SlideRow {
+    /// What this row shows.
+    pub kind: SlideRowKind,
+    /// The row's content: a complete ABC tune for a notation row, the lyrics
+    /// lines joined by newlines for a lyrics row.
+    pub content: String,
+    /// Whether this row's text is already printed elsewhere on the same slide.
+    ///
+    /// The notation row carries the words of the first requested language under
+    /// its notes, so the lyrics row for that language repeats them. It is still
+    /// included — a frontend may well want to show the text again in a larger
+    /// font for the congregation — but it is flagged so that a layout which
+    /// would rather not repeat it can leave it out. See
+    /// [`ComplexSlide::rows_without_repetition`].
+    #[serde(default)]
+    pub redundant: bool,
+}
+
+impl SlideRow {
+    /// A notation row holding a standalone ABC tune.
+    pub fn notation(abc: impl Into<String>, syllables: usize) -> SlideRow {
+        SlideRow {
+            kind: SlideRowKind::Notation { syllables },
+            content: abc.into(),
+            redundant: false,
+        }
+    }
+
+    /// A lyrics row. `language` is `None` when the song carries no language
+    /// information at all, which is the case for the classic `.song` format.
+    pub fn lyrics(language: Option<String>, text: impl Into<String>) -> SlideRow {
+        SlideRow {
+            kind: SlideRowKind::Lyrics { language },
+            content: text.into(),
+            redundant: false,
+        }
+    }
+
+    /// Mark this row as repeating text that the notation already shows.
+    ///
+    /// ```
+    /// use cantara_songlib::slides::SlideRow;
+    ///
+    /// let row = SlideRow::lyrics(Some("en".to_string()), "Amazing grace");
+    /// assert!(!row.redundant);
+    /// assert!(row.also_shown_in_notation().redundant);
+    /// ```
+    pub fn also_shown_in_notation(mut self) -> SlideRow {
+        self.redundant = true;
+        self
+    }
+
+    /// Whether this row carries notation rather than text.
+    pub fn is_notation(&self) -> bool {
+        matches!(self.kind, SlideRowKind::Notation { .. })
+    }
+}
+
+/// What a [`SlideRow`] shows.
+#[derive(Clone, Serialize, Deserialize, PartialEq, Debug)]
+pub enum SlideRowKind {
+    /// The melody as ABC notation.
+    Notation {
+        /// How many syllables the notation covers. A frontend can use this to
+        /// check that the notes and the text below really do match up.
+        syllables: usize,
+    },
+    /// Lyrics in a language, or unlabelled lyrics when `language` is `None`.
+    Lyrics {
+        /// The language code, e.g. `"en"`. `None` means the song stated no
+        /// language — see [`LanguageConfiguration::Complex`].
+        language: Option<String>,
+    },
+}
+
+/// One row that a complex presentation should show.
+///
+/// ```
+/// use cantara_songlib::slides::{LanguageConfiguration, SlideElement};
+///
+/// // "notation + english + german"
+/// let layout = LanguageConfiguration::Complex(vec![
+///     SlideElement::Notation,
+///     SlideElement::Lyrics("en".to_string()),
+///     SlideElement::Lyrics("de".to_string()),
+/// ]);
+/// # let _ = layout;
+/// ```
+#[derive(Clone, Serialize, Deserialize, PartialEq, Eq, Debug)]
+pub enum SlideElement {
+    /// The melody as ABC notation, covering exactly the lyrics shown below it.
+    Notation,
+    /// The lyrics in the given language.
+    Lyrics(String),
+}
+
+impl SlideElement {
+    /// Parse a row description such as `"notation"`, `"abc"`, `"noten"` or a
+    /// language code.
+    ///
+    /// Anything that is not a notation keyword is taken to be a language code,
+    /// which is what makes `--show notation,en,de` work.
+    ///
+    /// ```
+    /// use cantara_songlib::slides::SlideElement;
+    ///
+    /// assert_eq!("Noten".parse(), Ok(SlideElement::Notation));
+    /// assert_eq!("abc".parse(), Ok(SlideElement::Notation));
+    /// assert_eq!("de".parse(), Ok(SlideElement::Lyrics("de".to_string())));
+    /// ```
+    pub fn parse(text: &str) -> SlideElement {
+        match text.trim().to_lowercase().as_str() {
+            "notation" | "notes" | "noten" | "abc" | "score" | "music" => SlideElement::Notation,
+            language => SlideElement::Lyrics(language.to_string()),
+        }
+    }
+}
+
+impl std::str::FromStr for SlideElement {
+    type Err = std::convert::Infallible;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Ok(SlideElement::parse(s))
+    }
+}
+
 /// Configuration for which language(s) to display on presentation slides
 #[derive(Clone, Serialize, Deserialize, PartialEq, Debug)]
 pub enum LanguageConfiguration {
@@ -269,6 +463,15 @@ pub enum LanguageConfiguration {
     /// Multi-language mode: display lyrics in multiple languages on each slide.
     /// Languages are shown in the order specified. If the list is empty, all available languages are used.
     MultiLanguage(Vec<String>),
+
+    /// Complex mode: stack notation and any number of languages on each slide,
+    /// in the given order. Produces [`SlideContent::Complex`] slides.
+    ///
+    /// A song without any language information — a classic `.song` file, say —
+    /// has its unlabelled lyrics shown in place of the **first** requested
+    /// language. The remaining language rows are then left out rather than
+    /// repeating the same text under a different heading.
+    Complex(Vec<SlideElement>),
 }
 
 impl Default for LanguageConfiguration {
@@ -309,7 +512,7 @@ impl Default for SlideSettings {
         SlideSettings {
             title_slide: true,
             meta_syntax: "".to_string(),
-            show_meta_information: ShowMetaInformation::FirstSlideAndLastSlide,
+            show_meta_information: ShowMetaInformation::all(),
             empty_last_slide: true,
             show_spoiler: true,
             max_lines: None,
@@ -318,98 +521,215 @@ impl Default for SlideSettings {
     }
 }
 
-/// Enum for specifing the settings for the showing of meta information
-#[derive(Clone, Serialize, Deserialize, PartialEq, Debug)]
-pub enum ShowMetaInformation {
-    /// Don't show any meta information in the presentation
-    None,
-    /// Show the meta information at the first slide of a song (apart from the title slide)
-    FirstSlide,
-    /// Show the meta information at the last slide of a song (apart from an empty slide)
-    LastSlide,
-    /// Show the meta information on both the first and the last slide of a song
-    FirstSlideAndLastSlide,
+/// Which slides of a song carry the meta information line.
+///
+/// The three positions are independent, so any combination is expressible —
+/// including showing the metadata only on the title slide, which the previous
+/// enum could not express.
+///
+/// ```
+/// use cantara_songlib::slides::ShowMetaInformation;
+///
+/// // Named constructors for the usual combinations …
+/// assert!(ShowMetaInformation::first_and_last_slide().on_first_slide());
+/// assert!(!ShowMetaInformation::first_and_last_slide().on_title_slide());
+///
+/// // … or pick the positions individually.
+/// let custom = ShowMetaInformation {
+///     title_slide: true,
+///     first_slide: false,
+///     last_slide: true,
+/// };
+/// assert!(custom.on_title_slide());
+/// ```
+#[derive(Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Debug, Default)]
+pub struct ShowMetaInformation {
+    /// Show it on the song's title slide.
+    pub title_slide: bool,
+    /// Show it on the first content slide.
+    pub first_slide: bool,
+    /// Show it on the last content slide.
+    pub last_slide: bool,
 }
 
 impl ShowMetaInformation {
-    pub fn on_first_slide(&self) -> bool {
-        match self {
-            ShowMetaInformation::FirstSlide | ShowMetaInformation::FirstSlideAndLastSlide => true,
-            _ => false,
+    /// Show no meta information anywhere.
+    pub fn none() -> Self {
+        ShowMetaInformation::default()
+    }
+
+    /// Show it on the title slide only.
+    pub fn title_slide() -> Self {
+        ShowMetaInformation {
+            title_slide: true,
+            ..Self::none()
         }
     }
 
-    pub fn on_last_slide(&self) -> bool {
-        match self {
-            ShowMetaInformation::LastSlide | ShowMetaInformation::FirstSlideAndLastSlide => true,
-            _ => false,
+    /// Show it on the first content slide only.
+    pub fn first_slide() -> Self {
+        ShowMetaInformation {
+            first_slide: true,
+            ..Self::none()
         }
+    }
+
+    /// Show it on the last content slide only.
+    pub fn last_slide() -> Self {
+        ShowMetaInformation {
+            last_slide: true,
+            ..Self::none()
+        }
+    }
+
+    /// Show it on the first and the last content slide.
+    pub fn first_and_last_slide() -> Self {
+        ShowMetaInformation {
+            title_slide: false,
+            first_slide: true,
+            last_slide: true,
+        }
+    }
+
+    /// Show it on the title slide and on the first and last content slide.
+    pub fn all() -> Self {
+        ShowMetaInformation {
+            title_slide: true,
+            first_slide: true,
+            last_slide: true,
+        }
+    }
+
+    /// Whether anything is shown at all.
+    pub fn is_none(&self) -> bool {
+        !self.title_slide && !self.first_slide && !self.last_slide
+    }
+
+    /// Whether the title slide shows the meta information.
+    pub fn on_title_slide(&self) -> bool {
+        self.title_slide
+    }
+
+    /// Whether the first content slide shows the meta information.
+    pub fn on_first_slide(&self) -> bool {
+        self.first_slide
+    }
+
+    /// Whether the last content slide shows the meta information.
+    pub fn on_last_slide(&self) -> bool {
+        self.last_slide
+    }
+
+    /// Whether the content slide at `index` out of `count` shows it.
+    ///
+    /// A song with a single content slide has that slide be both the first and
+    /// the last, so it shows the metadata if either position is selected.
+    ///
+    /// ```
+    /// use cantara_songlib::slides::ShowMetaInformation;
+    ///
+    /// let last_only = ShowMetaInformation::last_slide();
+    /// assert!(!last_only.on_content_slide(0, 3));
+    /// assert!(last_only.on_content_slide(2, 3));
+    ///
+    /// // The only slide of a song counts as the last one.
+    /// assert!(last_only.on_content_slide(0, 1));
+    /// ```
+    pub fn on_content_slide(&self, index: usize, count: usize) -> bool {
+        if count == 0 {
+            return false;
+        }
+        (self.first_slide && index == 0) || (self.last_slide && index + 1 == count)
+    }
+
+    /// Read the positions from a bit mask, as the C interface passes them.
+    ///
+    /// Bit 0 is the first content slide, bit 1 the last, bit 2 the title slide.
+    /// The values `0`–`3` therefore keep the meaning the previous enum gave
+    /// them, so existing callers do not have to change.
+    ///
+    /// ```
+    /// use cantara_songlib::slides::ShowMetaInformation;
+    ///
+    /// assert_eq!(ShowMetaInformation::from_bits(0), ShowMetaInformation::none());
+    /// assert_eq!(ShowMetaInformation::from_bits(1), ShowMetaInformation::first_slide());
+    /// assert_eq!(ShowMetaInformation::from_bits(2), ShowMetaInformation::last_slide());
+    /// assert_eq!(ShowMetaInformation::from_bits(3), ShowMetaInformation::first_and_last_slide());
+    /// assert_eq!(ShowMetaInformation::from_bits(4), ShowMetaInformation::title_slide());
+    /// assert_eq!(ShowMetaInformation::from_bits(7), ShowMetaInformation::all());
+    /// ```
+    pub fn from_bits(bits: u8) -> Self {
+        ShowMetaInformation {
+            first_slide: bits & 0b001 != 0,
+            last_slide: bits & 0b010 != 0,
+            title_slide: bits & 0b100 != 0,
+        }
+    }
+
+    /// The inverse of [`ShowMetaInformation::from_bits`].
+    pub fn to_bits(&self) -> u8 {
+        (self.first_slide as u8) | ((self.last_slide as u8) << 1) | ((self.title_slide as u8) << 2)
     }
 }
 
-/// This function wraps the blocks, so that the number of lines never exceeds maximum_lines.
-/// The second block is optional and will be wrapped accordingly to the first one.
-/// **Warning: This function will panic, if the length of a given secondary blocks are not equal to the length of the primary block**
+/// Wrap blocks so that none of them exceeds `maximum_lines` lines.
+///
+/// Several groups of blocks can be wrapped at once — the slide exporters use
+/// that to keep the lyrics of different languages in step with each other. All
+/// groups are cut at the same places, so line *i* of one group still belongs
+/// with line *i* of the next afterwards.
 ///
 /// # Arguments
-/// - `blocks`: A `&mut Vec<Vec<Vec<String>>>` with all the blocks which should be wrapped
-/// - `maximum_lines`: The number of maximum lines which a block may have
-/// - `persistence`: Whether block brakes are to be preserved (recommended is true)
-/// Panics if secondary_block is Some(s) but s.len() != primary_block.len()
+/// - `blocks`: the groups to wrap; every group has to hold the same number of
+///   blocks
+/// - `maximum_lines`: the most lines a block may have
+/// - `persistence`: whether the original block breaks are preserved
+///   (recommended)
+///
 /// # Returns
-/// The modified blocks as `Vec<Vec<Vec<String>>>`
+/// The wrapped groups.
+///
+/// # Panics
+/// If the groups do not all hold the same number of blocks.
 pub fn wrap_blocks(
-    blocks: &Vec<Vec<Vec<String>>>,
+    blocks: &[Vec<Vec<String>>],
     maximum_lines: usize,
     persistence: bool,
 ) -> Vec<Vec<Vec<String>>> {
     if blocks.is_empty() {
-        return blocks.clone();
+        return blocks.to_vec();
     }
 
     let first_block_length = blocks[0].len();
-    if blocks.len() > 1 {
-        for i in 1..blocks.len() {
-            if blocks[i].len() != first_block_length {
-                panic!("The length of every block has to be equal.")
-            }
+    for group in blocks.iter().skip(1) {
+        if group.len() != first_block_length {
+            panic!("The length of every block has to be equal.")
         }
     }
 
-    let mut wrapped_blocks = blocks.clone();
+    let mut wrapped_blocks = blocks.to_vec();
 
     let mut block_index: usize = 0;
     let mut skip_next: bool = false;
     while block_index < wrapped_blocks[0].len() {
-        #[cfg(test)]
-        {
-            eprintln!("DBG idx={}, lens={:?}", block_index, wrapped_blocks.iter().map(|b| b.len()).collect::<Vec<_>>());
-        }
         if skip_next {
             skip_next = false;
             block_index += 1;
             continue;
         }
         if wrapped_blocks[0][block_index].len() > maximum_lines {
-            // Determine the desired size of the first part: balance roughly in half, but do not exceed maximum_lines
-            let total_lines = wrapped_blocks[0][block_index].len();
+            // The first part takes as many lines as it is allowed to.
             let target_first_len = maximum_lines;
 
-            // Determine whether we should insert a new block placeholder after the current one
             let has_next = wrapped_blocks[0].get(block_index + 1).is_some();
-            let insert_new_block = !has_next || persistence || (!persistence && has_next);
-            if insert_new_block {
-                wrapped_blocks
-                    .iter_mut()
-                    .for_each(|block| block.insert(block_index + 1, vec![]));
-            }
 
-            // Determine destination index for moved lines
-            // - If persistence is true or there was no next, move lines into the newly created block at index+1
-            // - If persistence is false and a next block exists, move lines into the original next block which is now at index+2
-            let merging_into_existing_next = !persistence && has_next;
-            // In non-persistent mode with an existing next, we'll still insert a placeholder at index+1
-            // and merge overflow into this new block, then append the original next block to it.
+            // The overflow always goes into a fresh block right after this one.
+            // In non-persistent mode the block that used to follow is then
+            // appended to it further down, which is what merges the two.
+            wrapped_blocks
+                .iter_mut()
+                .for_each(|block| block.insert(block_index + 1, vec![]));
+
             let destination_index = block_index + 1;
 
             let mut moved_line_count = 0;

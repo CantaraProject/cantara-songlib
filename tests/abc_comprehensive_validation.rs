@@ -10,8 +10,8 @@ use cantara_songlib::importer::song_yml;
 use cantara_songlib::song::Song;
 
 const TEST_FILES: [&str; 2] = [
-    "testfiles/Amazing Grace.song.yml",
-    "testfiles/Sei nicht stolz auf das, was du bist.song.yml",
+    "tests/data/Amazing Grace.song.yml",
+    "tests/data/Sei nicht stolz auf das, was du bist.song.yml",
 ];
 
 fn load(path: &str) -> Song {

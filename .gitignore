@@ -1,3 +1,10 @@
 /target
 .idea/
+
+# Exporter output produced while trying things out
 *.pdf
+*.ly
+*.midi
+*.abc
+*.svg
+!tests/data/**

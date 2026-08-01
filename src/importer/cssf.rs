@@ -19,7 +19,7 @@ use crate::importer::metadata::parse_metadata_block;
 /// 
 /// # Note
 /// In case the title is not specified as a tag in the cssf string, it will be extracted from the given filename. Otherwise, the given filename is not used. If you are sure that the cssf string contains the title, you could leave `file_name` empty.
-pub fn import_input_string(import_string: String, file_name: String) -> Result<Song, Box<dyn Error>> {
+pub fn import_input_string(import_string: String, _file_name: String) -> Result<Song, Box<dyn Error>> {
     let import_string = import_string.trim();
 
     if import_string.is_empty() {
@@ -40,7 +40,7 @@ pub fn import_input_string(import_string: String, file_name: String) -> Result<S
             if !cur_block.is_empty() {
                 if flag_is_metadata_block {
                     for (key, value) in parse_metadata_block(&cur_block) {
-                        song.add_tag(&key, &value);
+                        song.set_tag(&key, &value);
                     }
                 }
             } else {
@@ -54,14 +54,13 @@ pub fn import_input_string(import_string: String, file_name: String) -> Result<S
             continue;
         }
         
-        if flag_first_block && flag_first_line {
-            if line.contains(":") {
+        if flag_first_block && flag_first_line
+            && line.contains(":") {
                 flag_is_metadata_block = true;
             }
-        }
 
-        if flag_first_line && !flag_is_metadata_block { 
-            if !line.starts_with("#") {
+        if flag_first_line && !flag_is_metadata_block 
+            && !line.starts_with("#") {
                 return Err(
                     Box::new(
                         CantaraImportParsingError {
@@ -71,7 +70,6 @@ pub fn import_input_string(import_string: String, file_name: String) -> Result<S
                     )
                 );
             }
-        }
 
         if flag_first_line {
             flag_first_line = false;
