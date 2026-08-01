@@ -119,7 +119,6 @@ pub mod exporter;
 ///
 /// # Returns
 /// The slides as a `*const c_char`.
-#[no_mangle]
 pub extern "C" fn create_presentation_from_file_c(
     c_file_path: *const c_char,
     c_title_slide: c_int,
