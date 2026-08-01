@@ -88,6 +88,7 @@ pub mod song;
 #[doc = include_str!("../docs/data-model.md")]
 #[doc = include_str!("../docs/abc-export.md")]
 #[doc = include_str!("../docs/ccli-import.md")]
+#[doc = include_str!("../docs/meta-information.md")]
 pub struct DocumentationExamples;
 
 pub mod importer;
@@ -98,7 +99,6 @@ pub mod filetypes;
 /// The handling of song presentation slides
 pub mod slides;
 
-/// Templates which define the creation of slides and the insertion of data
 pub mod templating;
 
 pub mod exporter;
@@ -109,7 +109,7 @@ pub mod exporter;
 /// - `c_file_path`: The absolute path of the file as a `*const c_char`
 /// - `c_title_slide`: A C boolean integer which determins whether to show a separate title slide (0 = false, 1 => true)
 /// - `c_show_spoiler`: A C boolean integer which determins whether a designated spoiler is shown 
-/// - `c_show_meta_information`: A C integer which determins whether meta informtion is shown (0 => None, 1 => Show on first slide, 2 => Show on last slide, 3 => Show on first slide and last slide)
+/// - `c_show_meta_information`: A C integer used as a bit mask for where the meta information is shown: bit 0 = first content slide, bit 1 = last content slide, bit 2 = title slide. So 0 => nowhere, 1 => first slide, 2 => last slide, 3 => first and last, 4 => title slide only, 7 => everywhere.
 /// - `c_meta_syntax`: A `*const c_char` which contains the syntax of the shown meta data (if none is desired, give an empty string)
 /// - `c_empty_last_slides`: A C boolean integer which determins whether an empty last slide should be appended to every song (0 => false, 1 => true)
 /// - `c_max_lines`: A c_int with the max number of lines after which the slide is wrapped. If 0 is given, no slide wrap will take place,
@@ -135,12 +135,10 @@ pub extern "C" fn create_presentation_from_file_c(
         1 => true,
         _ => false
     };
-    let show_meta_information: ShowMetaInformation = match c_show_meta_information {
-        1 => ShowMetaInformation::FirstSlide,
-        2 => ShowMetaInformation::LastSlide,        
-        3 => ShowMetaInformation::FirstSlideAndLastSlide,
-        _ => ShowMetaInformation::None,        
-    };
+    // A bit mask: bit 0 = first content slide, bit 1 = last, bit 2 = title
+    // slide. Values 0-3 keep the meaning they had before the title slide
+    // became selectable, so existing callers are unaffected.
+    let show_meta_information = ShowMetaInformation::from_bits(c_show_meta_information as u8);
     
     let meta_syntax = c_string_to_rust(c_meta_syntax).unwrap();
     

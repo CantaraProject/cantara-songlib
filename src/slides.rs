@@ -308,7 +308,7 @@ impl Default for SlideSettings {
         SlideSettings {
             title_slide: true,
             meta_syntax: "".to_string(),
-            show_meta_information: ShowMetaInformation::FirstSlideAndLastSlide,
+            show_meta_information: ShowMetaInformation::all(),
             empty_last_slide: true,
             show_spoiler: true,
             max_lines: None,
@@ -317,32 +317,154 @@ impl Default for SlideSettings {
     }
 }
 
-/// Enum for specifing the settings for the showing of meta information
-#[derive(Clone, Serialize, Deserialize, PartialEq, Debug)]
-pub enum ShowMetaInformation {
-    /// Don't show any meta information in the presentation
-    None,
-    /// Show the meta information at the first slide of a song (apart from the title slide)
-    FirstSlide,
-    /// Show the meta information at the last slide of a song (apart from an empty slide)
-    LastSlide,
-    /// Show the meta information on both the first and the last slide of a song
-    FirstSlideAndLastSlide,
+/// Which slides of a song carry the meta information line.
+///
+/// The three positions are independent, so any combination is expressible —
+/// including showing the metadata only on the title slide, which the previous
+/// enum could not express.
+///
+/// ```
+/// use cantara_songlib::slides::ShowMetaInformation;
+///
+/// // Named constructors for the usual combinations …
+/// assert!(ShowMetaInformation::first_and_last_slide().on_first_slide());
+/// assert!(!ShowMetaInformation::first_and_last_slide().on_title_slide());
+///
+/// // … or pick the positions individually.
+/// let custom = ShowMetaInformation {
+///     title_slide: true,
+///     first_slide: false,
+///     last_slide: true,
+/// };
+/// assert!(custom.on_title_slide());
+/// ```
+#[derive(Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Debug, Default)]
+pub struct ShowMetaInformation {
+    /// Show it on the song's title slide.
+    pub title_slide: bool,
+    /// Show it on the first content slide.
+    pub first_slide: bool,
+    /// Show it on the last content slide.
+    pub last_slide: bool,
 }
 
 impl ShowMetaInformation {
-    pub fn on_first_slide(&self) -> bool {
-        match self {
-            ShowMetaInformation::FirstSlide | ShowMetaInformation::FirstSlideAndLastSlide => true,
-            _ => false,
+    /// Show no meta information anywhere.
+    pub fn none() -> Self {
+        ShowMetaInformation::default()
+    }
+
+    /// Show it on the title slide only.
+    pub fn title_slide() -> Self {
+        ShowMetaInformation {
+            title_slide: true,
+            ..Self::none()
         }
     }
 
-    pub fn on_last_slide(&self) -> bool {
-        match self {
-            ShowMetaInformation::LastSlide | ShowMetaInformation::FirstSlideAndLastSlide => true,
-            _ => false,
+    /// Show it on the first content slide only.
+    pub fn first_slide() -> Self {
+        ShowMetaInformation {
+            first_slide: true,
+            ..Self::none()
         }
+    }
+
+    /// Show it on the last content slide only.
+    pub fn last_slide() -> Self {
+        ShowMetaInformation {
+            last_slide: true,
+            ..Self::none()
+        }
+    }
+
+    /// Show it on the first and the last content slide.
+    pub fn first_and_last_slide() -> Self {
+        ShowMetaInformation {
+            title_slide: false,
+            first_slide: true,
+            last_slide: true,
+        }
+    }
+
+    /// Show it on the title slide and on the first and last content slide.
+    pub fn all() -> Self {
+        ShowMetaInformation {
+            title_slide: true,
+            first_slide: true,
+            last_slide: true,
+        }
+    }
+
+    /// Whether anything is shown at all.
+    pub fn is_none(&self) -> bool {
+        !self.title_slide && !self.first_slide && !self.last_slide
+    }
+
+    /// Whether the title slide shows the meta information.
+    pub fn on_title_slide(&self) -> bool {
+        self.title_slide
+    }
+
+    /// Whether the first content slide shows the meta information.
+    pub fn on_first_slide(&self) -> bool {
+        self.first_slide
+    }
+
+    /// Whether the last content slide shows the meta information.
+    pub fn on_last_slide(&self) -> bool {
+        self.last_slide
+    }
+
+    /// Whether the content slide at `index` out of `count` shows it.
+    ///
+    /// A song with a single content slide has that slide be both the first and
+    /// the last, so it shows the metadata if either position is selected.
+    ///
+    /// ```
+    /// use cantara_songlib::slides::ShowMetaInformation;
+    ///
+    /// let last_only = ShowMetaInformation::last_slide();
+    /// assert!(!last_only.on_content_slide(0, 3));
+    /// assert!(last_only.on_content_slide(2, 3));
+    ///
+    /// // The only slide of a song counts as the last one.
+    /// assert!(last_only.on_content_slide(0, 1));
+    /// ```
+    pub fn on_content_slide(&self, index: usize, count: usize) -> bool {
+        if count == 0 {
+            return false;
+        }
+        (self.first_slide && index == 0) || (self.last_slide && index + 1 == count)
+    }
+
+    /// Read the positions from a bit mask, as the C interface passes them.
+    ///
+    /// Bit 0 is the first content slide, bit 1 the last, bit 2 the title slide.
+    /// The values `0`–`3` therefore keep the meaning the previous enum gave
+    /// them, so existing callers do not have to change.
+    ///
+    /// ```
+    /// use cantara_songlib::slides::ShowMetaInformation;
+    ///
+    /// assert_eq!(ShowMetaInformation::from_bits(0), ShowMetaInformation::none());
+    /// assert_eq!(ShowMetaInformation::from_bits(1), ShowMetaInformation::first_slide());
+    /// assert_eq!(ShowMetaInformation::from_bits(2), ShowMetaInformation::last_slide());
+    /// assert_eq!(ShowMetaInformation::from_bits(3), ShowMetaInformation::first_and_last_slide());
+    /// assert_eq!(ShowMetaInformation::from_bits(4), ShowMetaInformation::title_slide());
+    /// assert_eq!(ShowMetaInformation::from_bits(7), ShowMetaInformation::all());
+    /// ```
+    pub fn from_bits(bits: u8) -> Self {
+        ShowMetaInformation {
+            first_slide: bits & 0b001 != 0,
+            last_slide: bits & 0b010 != 0,
+            title_slide: bits & 0b100 != 0,
+        }
+    }
+
+    /// The inverse of [`ShowMetaInformation::from_bits`].
+    pub fn to_bits(&self) -> u8 {
+        (self.first_slide as u8) | ((self.last_slide as u8) << 1) | ((self.title_slide as u8) << 2)
     }
 }
 

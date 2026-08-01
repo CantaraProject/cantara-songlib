@@ -2,11 +2,9 @@
 //! Generates presentation slides from any Song, regardless of the import format.
 //! Supports both single-language and multi-language slide generation.
 
-use std::collections::HashMap;
-
 use crate::slides::{wrap_blocks, LanguageConfiguration, Slide, SlideSettings};
 use crate::song::{LyricLanguage, Song, SongPart};
-use crate::templating::render_metadata;
+use crate::templating::MetaTemplate;
 
 /// Strip LilyPond lyric markup from lyrics text for presentation display.
 ///
@@ -76,38 +74,43 @@ fn resolve_multi_languages(song: &Song, requested: &[String]) -> Vec<String> {
     }
 }
 
-/// Build metadata text from song tags using the template in settings.
+/// The meta information line for a song, or `None` when there is nothing to
+/// show.
+///
+/// The template is compiled once per song and reused for every slide. A
+/// malformed template yields no metadata rather than aborting the export — the
+/// caller can compile it with [`MetaTemplate::parse`] beforehand to be told
+/// about the mistake.
 fn build_meta_text(song: &Song, settings: &SlideSettings) -> Option<String> {
-    let mut metadata: HashMap<String, String> = song
-        .tags()
-        .iter()
-        .map(|(key, value)| (key.clone(), value.clone()))
-        .collect();
-    metadata.insert("title".to_string(), song.title.clone());
-    match render_metadata(&settings.meta_syntax, &metadata) {
-        Ok(ref s) if !s.is_empty() => Some(s.clone()),
-        _ => None,
+    if settings.show_meta_information.is_none() {
+        return None;
     }
+    MetaTemplate::parse(&settings.meta_syntax)
+        .ok()?
+        .render_song(song)
 }
 
-/// Determine whether meta text should be shown on a slide at the given position.
+/// The meta text for a content slide, honouring where it is meant to appear.
 fn meta_for_position(
     meta_text: &Option<String>,
     settings: &SlideSettings,
     index: usize,
     count: usize,
 ) -> Option<String> {
-    meta_text.as_ref().and_then(|_| {
-        let is_first = index == 0;
-        let is_last = index == count - 1;
-        if (settings.show_meta_information.on_first_slide() && is_first)
-            || (settings.show_meta_information.on_last_slide() && is_last)
-        {
-            meta_text.clone()
-        } else {
-            None
-        }
-    })
+    if settings.show_meta_information.on_content_slide(index, count) {
+        meta_text.clone()
+    } else {
+        None
+    }
+}
+
+/// The meta text for the title slide, honouring the setting.
+fn meta_for_title_slide(meta_text: &Option<String>, settings: &SlideSettings) -> Option<String> {
+    if settings.show_meta_information.on_title_slide() {
+        meta_text.clone()
+    } else {
+        None
+    }
 }
 
 /// Generate single-language presentation slides from a Song.
@@ -120,7 +123,10 @@ fn generate_single_language_slides(
     let meta_text = build_meta_text(song, settings);
 
     if settings.title_slide {
-        slides.push(Slide::new_title_slide(song.title.clone(), meta_text.clone()));
+        slides.push(Slide::new_title_slide(
+            song.title.clone(),
+            meta_for_title_slide(&meta_text, settings),
+        ));
     }
 
     let ordered_parts = song.ordered_parts();
@@ -185,7 +191,10 @@ fn generate_multi_language_slides(
     }
 
     if settings.title_slide {
-        slides.push(Slide::new_title_slide(song.title.clone(), meta_text.clone()));
+        slides.push(Slide::new_title_slide(
+            song.title.clone(),
+            meta_for_title_slide(&meta_text, settings),
+        ));
     }
 
     let ordered_parts = song.ordered_parts();
@@ -257,7 +266,7 @@ mod tests {
         let settings = SlideSettings {
             title_slide: true,
             show_spoiler: true,
-            show_meta_information: ShowMetaInformation::None,
+            show_meta_information: ShowMetaInformation::none(),
             meta_syntax: "".to_string(),
             empty_last_slide: true,
             max_lines: None,
@@ -287,7 +296,7 @@ mod tests {
         let settings = SlideSettings {
             title_slide: false,
             show_spoiler: false,
-            show_meta_information: ShowMetaInformation::None,
+            show_meta_information: ShowMetaInformation::none(),
             meta_syntax: "".to_string(),
             empty_last_slide: false,
             max_lines: None,
@@ -312,7 +321,7 @@ mod tests {
         let settings = SlideSettings {
             title_slide: false,
             show_spoiler: false,
-            show_meta_information: ShowMetaInformation::None,
+            show_meta_information: ShowMetaInformation::none(),
             meta_syntax: "".to_string(),
             empty_last_slide: false,
             max_lines: None,
@@ -324,6 +333,176 @@ mod tests {
         // The test file only has "en" as explicit language.
         // Parts with only one language available will still produce slides.
         assert!(!slides.is_empty());
+    }
+
+    // --- Meta information -----------------------------------------------
+
+    /// Build a three-verse song with metadata for the position tests.
+    fn song_with_metadata() -> Song {
+        let mut song = Song::new("Amazing Grace");
+        song.set_tag("author", "John Newton");
+        for text in ["verse one", "verse two", "verse three"] {
+            let id = song.add_part_of_type(crate::song::SongPartType::Verse, None);
+            song.part_mut(&id)
+                .unwrap()
+                .add_content(crate::song::SongPartContent::lyrics(
+                    LyricLanguage::Default,
+                    text,
+                ));
+        }
+        song.add_guessed_part_order();
+        song
+    }
+
+    fn settings_with(show: ShowMetaInformation) -> SlideSettings {
+        SlideSettings {
+            title_slide: true,
+            meta_syntax: "{{title}} ({{author}})".to_string(),
+            show_meta_information: show,
+            empty_last_slide: false,
+            show_spoiler: false,
+            max_lines: None,
+            language: LanguageConfiguration::default(),
+        }
+    }
+
+    /// The indices of the slides that carry a meta line.
+    fn slides_with_meta(song: &Song, settings: &SlideSettings) -> Vec<usize> {
+        slides_from_song(song, settings)
+            .iter()
+            .enumerate()
+            .filter(|(_, slide)| slide.has_meta_text())
+            .map(|(index, _)| index)
+            .collect()
+    }
+
+    #[test]
+    fn test_meta_appears_only_where_asked_for() {
+        let song = song_with_metadata();
+        // slides: 0 = title, 1..=3 = the three verses.
+        let cases = [
+            (ShowMetaInformation::none(), vec![]),
+            (ShowMetaInformation::title_slide(), vec![0]),
+            (ShowMetaInformation::first_slide(), vec![1]),
+            (ShowMetaInformation::last_slide(), vec![3]),
+            (ShowMetaInformation::first_and_last_slide(), vec![1, 3]),
+            (ShowMetaInformation::all(), vec![0, 1, 3]),
+        ];
+
+        for (show, expected) in cases {
+            assert_eq!(
+                slides_with_meta(&song, &settings_with(show)),
+                expected,
+                "wrong slides for {:?}",
+                show
+            );
+        }
+    }
+
+    #[test]
+    fn test_meta_text_is_rendered_from_the_template() {
+        let song = song_with_metadata();
+        let slides = slides_from_song(&song, &settings_with(ShowMetaInformation::title_slide()));
+
+        let rendered = serde_json::to_string(&slides[0]).unwrap();
+        assert!(
+            rendered.contains("Amazing Grace (John Newton)"),
+            "the template was not rendered: {}",
+            rendered
+        );
+    }
+
+    /// A song with a single content slide has that slide be both the first and
+    /// the last, and the meta line must not be duplicated onto it twice.
+    #[test]
+    fn test_single_content_slide_is_both_first_and_last() {
+        let mut song = Song::new("One Block");
+        song.set_tag("author", "Someone");
+        let id = song.add_part_of_type(crate::song::SongPartType::Verse, None);
+        song.part_mut(&id)
+            .unwrap()
+            .add_content(crate::song::SongPartContent::lyrics(
+                LyricLanguage::Default,
+                "the only verse",
+            ));
+        song.add_guessed_part_order();
+
+        for show in [
+            ShowMetaInformation::first_slide(),
+            ShowMetaInformation::last_slide(),
+            ShowMetaInformation::first_and_last_slide(),
+        ] {
+            assert_eq!(slides_with_meta(&song, &settings_with(show)), [1]);
+        }
+    }
+
+    /// An empty template means no meta line, whatever the positions say.
+    #[test]
+    fn test_blank_template_shows_nothing() {
+        let song = song_with_metadata();
+        let settings = SlideSettings {
+            meta_syntax: String::new(),
+            ..settings_with(ShowMetaInformation::all())
+        };
+        assert!(slides_with_meta(&song, &settings).is_empty());
+    }
+
+    /// A template whose placeholders the song has no values for produces an
+    /// empty line, which should be left off rather than shown blank.
+    #[test]
+    fn test_template_without_values_shows_nothing() {
+        let mut song = song_with_metadata();
+        song.remove_tag("author");
+
+        let settings = SlideSettings {
+            meta_syntax: "{{author}}".to_string(),
+            ..settings_with(ShowMetaInformation::all())
+        };
+        assert!(slides_with_meta(&song, &settings).is_empty());
+    }
+
+    /// A malformed template must not abort the export; the slides come out
+    /// without metadata. The command line checks the template up front so the
+    /// user still gets told.
+    #[test]
+    fn test_malformed_template_does_not_break_the_export() {
+        let song = song_with_metadata();
+        let settings = SlideSettings {
+            meta_syntax: "{{#if author}}never closed".to_string(),
+            ..settings_with(ShowMetaInformation::all())
+        };
+
+        let slides = slides_from_song(&song, &settings);
+        assert_eq!(slides.len(), 4, "the slides themselves should still be there");
+        assert!(slides_with_meta(&song, &settings).is_empty());
+    }
+
+    /// Multi-language mode places the meta line by the same rules.
+    #[test]
+    fn test_meta_in_multi_language_mode() {
+        let mut song = Song::new("Two Languages");
+        song.set_tag("author", "Someone");
+        for texts in [("one", "eins"), ("two", "zwei")] {
+            let id = song.add_part_of_type(crate::song::SongPartType::Verse, None);
+            let part = song.part_mut(&id).unwrap();
+            part.add_content(crate::song::SongPartContent::lyrics(
+                LyricLanguage::specific("en"),
+                texts.0,
+            ));
+            part.add_content(crate::song::SongPartContent::lyrics(
+                LyricLanguage::specific("de"),
+                texts.1,
+            ));
+        }
+        song.add_guessed_part_order();
+
+        let settings = SlideSettings {
+            language: LanguageConfiguration::MultiLanguage(vec![]),
+            ..settings_with(ShowMetaInformation::all())
+        };
+
+        // slides: 0 = title, 1 = verse one, 2 = verse two.
+        assert_eq!(slides_with_meta(&song, &settings), [0, 1, 2]);
     }
 
     #[test]

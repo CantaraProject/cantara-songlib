@@ -42,7 +42,7 @@ fn test_trailer_metadata_reaches_the_slides() {
     let settings = SlideSettings {
         title_slide: true,
         meta_syntax: "{{title}} — {{author}} (CCLI {{ccli_song_number}})".to_string(),
-        show_meta_information: ShowMetaInformation::FirstSlide,
+        show_meta_information: ShowMetaInformation::first_slide(),
         ..SlideSettings::default()
     };
 

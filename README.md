@@ -17,6 +17,7 @@ It is part of the effort to rewrite [Cantara](https://github.com/reckel-jm/canta
 | [docs/lilypond-export.md](docs/lilypond-export.md) | Sheet music export and rendering |
 | [docs/abc-export.md](docs/abc-export.md) | ABC notation export |
 | [docs/ccli-import.md](docs/ccli-import.md) | Reading CCLI SongSelect exports in any language |
+| [docs/meta-information.md](docs/meta-information.md) | The meta information line on slides: template and placement |
 
 ## Repository layout
 
@@ -26,7 +27,7 @@ src/
 ├── importer/      .song (classic), .song.yml, .ccli, .cssf readers
 ├── exporter/      slides, LilyPond, ABC writers
 ├── slides.rs      presentation slide types
-├── templating.rs  metadata templating
+├── templating.rs  the meta information template
 ├── lib.rs         library entry point and C FFI
 └── main.rs        the command line wrapper
 tests/

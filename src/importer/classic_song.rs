@@ -13,7 +13,7 @@ use crate::importer::errors::CantaraImportNoContentError;
 use crate::song::{LyricLanguage, Song, SongPartContent, SongPartId, SongPartType};
 
 use crate::slides::*;
-use crate::templating::render_metadata;
+use crate::templating::MetaTemplate;
 
 use crate::importer::metadata::*;
 
@@ -270,46 +270,47 @@ pub fn slides_from_classic_song(
     }
 
     // Create the Presentation
-    
+
     let mut slides: Vec<Slide> = vec![];
 
-    let meta_text_rendering_result = render_metadata(
-        &slide_settings.meta_syntax,
-        &metadata
-    );
-    let mut meta_text: String = "".to_string();
+    // The title has to be in the metadata before the template is rendered,
+    // otherwise a template using {{title}} would come out blank for a file
+    // without a #title tag.
+    metadata
+        .entry("title".to_string())
+        .or_insert_with(|| backup_title.clone());
 
-    let meta_text_showable: bool = match meta_text_rendering_result {
-        Ok(str) => {
-            meta_text = str.clone();
-            !str.is_empty()
-        },
-        Err(_) => false,
+    // Compile the template once and render it once; the result is then placed
+    // on whichever slides the settings ask for.
+    let meta_text: Option<String> = if slide_settings.show_meta_information.is_none() {
+        None
+    } else {
+        MetaTemplate::parse(&slide_settings.meta_syntax)
+            .ok()
+            .and_then(|template| template.render(&metadata))
     };
 
-    // Make sure that the meta tag title is available (bugfix...)
-    if metadata.get("title").is_none() {
-        metadata.insert("title".to_string(), backup_title.clone());
-    }
-
     if slide_settings.title_slide {
-        let displayed_meta_text = match meta_text_showable {
-            true => Some(meta_text.clone()),
+        let displayed_meta_text = match slide_settings.show_meta_information.on_title_slide() {
+            true => meta_text.clone(),
             false => None,
         };
-        
+
         slides.push(
             Slide::new_title_slide(
-                metadata.get("title").unwrap().into(),                                          
+                metadata.get("title").unwrap().into(),
                 displayed_meta_text
             )
         )
     }
-    
+
     let count = blocks.len();
     for (index, block) in blocks.iter().enumerate() {
-        let displayed_meta_text = match meta_text_showable && (slide_settings.show_meta_information.on_first_slide() && index == 1) || (slide_settings.show_meta_information.on_last_slide() && index == count -1) {
-            true => Some(meta_text.clone()),
+        let displayed_meta_text = match slide_settings
+            .show_meta_information
+            .on_content_slide(index, count)
+        {
+            true => meta_text.clone(),
             false => None,
         };
         
@@ -417,7 +418,7 @@ mod test {
         let presentation_settings = SlideSettings {
             title_slide: true,
             meta_syntax: "{{title}} ({{author}})".to_string(),
-            show_meta_information: ShowMetaInformation::FirstSlideAndLastSlide,
+            show_meta_information: ShowMetaInformation::all(),
             empty_last_slide: true,
             show_spoiler: true ,
             max_lines: Some(10),
@@ -442,7 +443,7 @@ mod test {
         let mut presentation_settings = SlideSettings {
             title_slide: false,
             meta_syntax: "{{title}} ({{author}})".to_string(),
-            show_meta_information: ShowMetaInformation::None,
+            show_meta_information: ShowMetaInformation::none(),
             empty_last_slide: true,
             show_spoiler: true,
             max_lines: None,
@@ -457,15 +458,111 @@ mod test {
 
         slides.iter().for_each(|slide| assert!(!slide.has_meta_text()));
 
-        presentation_settings.show_meta_information = ShowMetaInformation::FirstSlide;
-        
+        // With no title slide, the first content slide is slides[0]. This used
+        // to be checked against slides[1], which enshrined an off-by-one in the
+        // position test.
+        presentation_settings.show_meta_information = ShowMetaInformation::first_slide();
+
         let slides: Vec<Slide> = slides_from_classic_song(
-            &testfile, 
+            &testfile,
             &presentation_settings,
             "Verily, Verily".to_string()
         );
 
-        assert!(slides.get(1).unwrap().has_meta_text());
+        assert!(slides[0].has_meta_text(), "the first slide should carry it");
+        for slide in &slides[1..] {
+            assert!(!slide.has_meta_text(), "only the first slide should carry it");
+        }
+    }
+
+    /// The metadata goes on the last content slide, not on the trailing empty
+    /// slide that `empty_last_slide` appends.
+    #[test]
+    fn test_metadata_on_the_last_slide() {
+        let testfile =
+            std::fs::read_to_string("tests/data/O What A Savior That He Died For Me.song").unwrap();
+
+        let settings = SlideSettings {
+            title_slide: false,
+            meta_syntax: "{{title}} ({{author}})".to_string(),
+            show_meta_information: ShowMetaInformation::last_slide(),
+            empty_last_slide: true,
+            show_spoiler: true,
+            max_lines: None,
+            language: crate::slides::LanguageConfiguration::default(),
+        };
+
+        let slides = slides_from_classic_song(&testfile, &settings, "Verily".to_string());
+
+        let carrying: Vec<usize> = slides
+            .iter()
+            .enumerate()
+            .filter(|(_, slide)| slide.has_meta_text())
+            .map(|(index, _)| index)
+            .collect();
+
+        // The last content slide is the one before the appended empty slide.
+        assert_eq!(carrying, [slides.len() - 2]);
+    }
+
+    /// The title slide is a position of its own: asking for the metadata only
+    /// on the content slides must leave the title slide clean.
+    #[test]
+    fn test_title_slide_is_a_separate_position() {
+        let testfile =
+            std::fs::read_to_string("tests/data/O What A Savior That He Died For Me.song").unwrap();
+
+        let mut settings = SlideSettings {
+            title_slide: true,
+            meta_syntax: "{{title}} ({{author}})".to_string(),
+            show_meta_information: ShowMetaInformation::first_slide(),
+            empty_last_slide: false,
+            show_spoiler: true,
+            max_lines: None,
+            language: crate::slides::LanguageConfiguration::default(),
+        };
+
+        let slides = slides_from_classic_song(&testfile, &settings, "Verily".to_string());
+        assert!(!slides[0].has_meta_text(), "the title slide was not asked for");
+        assert!(slides[1].has_meta_text(), "the first content slide was");
+
+        settings.show_meta_information = ShowMetaInformation::title_slide();
+        let slides = slides_from_classic_song(&testfile, &settings, "Verily".to_string());
+        assert!(slides[0].has_meta_text(), "the title slide was asked for");
+        for slide in &slides[1..] {
+            assert!(!slide.has_meta_text(), "no content slide was");
+        }
+    }
+
+    /// A file without a `#title` tag falls back to the file name, and the
+    /// template has to see that fallback rather than an empty title.
+    #[test]
+    fn test_title_fallback_reaches_the_template() {
+        let testfile =
+            std::fs::read_to_string("tests/data/What a friend we have in Jesus.song").unwrap();
+
+        let settings = SlideSettings {
+            title_slide: true,
+            meta_syntax: "{{title}}".to_string(),
+            show_meta_information: ShowMetaInformation::title_slide(),
+            empty_last_slide: false,
+            show_spoiler: false,
+            max_lines: None,
+            language: crate::slides::LanguageConfiguration::default(),
+        };
+
+        let slides = slides_from_classic_song(
+            &testfile,
+            &settings,
+            "What a friend we have in Jesus".to_string(),
+        );
+
+        let rendered = serde_json::to_string(&slides[0]).unwrap();
+        assert!(
+            rendered.contains("What a friend we have in Jesus"),
+            "the fallback title is missing from the meta line: {}",
+            rendered
+        );
     }
 
 }

@@ -4,7 +4,8 @@ use cantara_songlib::exporter;
 use cantara_songlib::exporter::abc::AbcSettings;
 use cantara_songlib::exporter::lilypond::LilypondSettings;
 use cantara_songlib::importer::import_song_from_file;
-use cantara_songlib::slides::{LanguageConfiguration, SlideSettings};
+use cantara_songlib::slides::{LanguageConfiguration, ShowMetaInformation, SlideSettings};
+use cantara_songlib::templating::MetaTemplate;
 use cantara_songlib::slides_from_file;
 
 use clap::{Parser, Subcommand};
@@ -21,6 +22,33 @@ struct Cli {
     file: Option<PathBuf>,
 }
 
+/// Where the meta information line may appear, as selectable on the command
+/// line. Maps onto [`ShowMetaInformation`].
+#[derive(Copy, Clone, PartialEq, Eq, clap::ValueEnum)]
+enum MetaPosition {
+    /// On the song's title slide
+    Title,
+    /// On the first content slide
+    First,
+    /// On the last content slide
+    Last,
+}
+
+impl MetaPosition {
+    /// Fold the selected positions into the library's settings type.
+    fn to_settings(positions: &[MetaPosition]) -> ShowMetaInformation {
+        let mut show = ShowMetaInformation::none();
+        for position in positions {
+            match position {
+                MetaPosition::Title => show.title_slide = true,
+                MetaPosition::First => show.first_slide = true,
+                MetaPosition::Last => show.last_slide = true,
+            }
+        }
+        show
+    }
+}
+
 #[derive(Subcommand)]
 enum Commands {
     /// Generates a presentation with presentation slides
@@ -34,6 +62,21 @@ enum Commands {
         /// If no languages are specified, all available languages are used.
         #[arg(short, long, value_name = "LANGS")]
         multi_language: Option<Option<String>>,
+
+        /// Handlebars template for the meta information line, e.g.
+        /// "{{title}} ({{author}})". Available variables are the song's tags
+        /// plus "title". Empty means no meta information.
+        #[arg(long, value_name = "TEMPLATE", default_value = "")]
+        meta_syntax: String,
+
+        /// Where to show the meta information. Repeat the flag or separate the
+        /// values with a comma, e.g. --show-meta title,first.
+        #[arg(long, value_name = "WHERE", value_delimiter = ',', value_enum)]
+        show_meta: Vec<MetaPosition>,
+
+        /// Omit the separate title slide at the beginning of the song
+        #[arg(long)]
+        no_title_slide: bool,
     },
 
     /// Generates a LilyPond (.ly) music sheet file
@@ -81,6 +124,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Commands::Presentation {
             language,
             multi_language,
+            meta_syntax,
+            show_meta,
+            no_title_slide,
         } => {
             let lang_config = if let Some(multi) = multi_language {
                 // --multi-language was passed
@@ -93,8 +139,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 LanguageConfiguration::SingleLanguage(language.clone())
             };
 
+            // Fail early and clearly on a broken template rather than
+            // silently producing slides without any metadata.
+            MetaTemplate::parse(meta_syntax)
+                .map_err(|error| format!("invalid --meta-syntax template: {}", error))?;
+
             let settings = SlideSettings {
                 language: lang_config,
+                title_slide: !no_title_slide,
+                meta_syntax: meta_syntax.clone(),
+                show_meta_information: MetaPosition::to_settings(show_meta),
                 ..SlideSettings::default()
             };
 
