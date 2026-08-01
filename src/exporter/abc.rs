@@ -1374,6 +1374,149 @@ fn ensure_final_barline(sections: &mut [Section]) {
 // Public API
 // ---------------------------------------------------------------------------
 
+/// The music of one song part, cut into phrases along its lyrics lines.
+///
+/// This is what lets a presentation slide show the notes that belong to exactly
+/// the lyrics printed underneath them: ask for phrases `2..4` and you get a
+/// playable tune covering the third and fourth lyrics line, nothing more.
+///
+/// ```
+/// use cantara_songlib::exporter::abc::{AbcSettings, PartPhrases};
+/// use cantara_songlib::importer::song_yml;
+///
+/// let content = std::fs::read_to_string("tests/data/Amazing Grace.song.yml").unwrap();
+/// let song = song_yml::import_from_yml_string(&content).unwrap();
+/// let verse = song.part(&"verse.1".parse().unwrap()).unwrap();
+///
+/// let phrases = PartPhrases::of(&song, verse, &AbcSettings::default()).unwrap();
+/// assert_eq!(phrases.len(), 4); // "Amazing Grace" has four lines per verse
+///
+/// let excerpt = phrases.excerpt(0..2).unwrap();
+/// assert!(excerpt.starts_with("X:1"));
+/// ```
+pub struct PartPhrases {
+    events: Vec<MusicEvent>,
+    /// One `(start, end, syllables)` triple per lyrics line.
+    segments: Vec<(usize, usize, usize)>,
+    header: String,
+    unit: Frac,
+    key: [i8; 7],
+}
+
+impl PartPhrases {
+    /// Split a part's melody into phrases.
+    ///
+    /// The melody is looked up through [`Song::voice_for_part`], so a verse
+    /// that only references another verse's tune works too. Returns `None` when
+    /// no melody can be found.
+    ///
+    /// The phrase boundaries come from the part's own lyrics: a note that
+    /// continues a tie or sits inside a slur is a melisma and stays with the
+    /// preceding syllable, so counting syllables against notes lines up.
+    pub fn of(song: &Song, part: &SongPart, settings: &AbcSettings) -> Option<PartPhrases> {
+        let voice = song.voice_for_part(part)?;
+
+        let mut sections = [Section {
+            annotation: None,
+            events: parse_voice(&voice.content),
+            lyrics: Vec::new(),
+        }];
+
+        let bar_length = meter_bar_length(song);
+        insert_missing_barlines(&mut sections, bar_length, initial_bar_fill(song, bar_length));
+        ensure_final_barline(&mut sections);
+
+        let events = std::mem::take(&mut sections[0].events);
+
+        // The lyrics of the part itself define where the phrases end. Any
+        // language will do — every language of a part sings the same melody.
+        let reference: Vec<Vec<Syllable>> = part
+            .lyrics_for(None, song.default_language.as_deref())
+            .map(|content| lyrics_to_lines(&content.content))
+            .unwrap_or_default();
+
+        let segments = segment_events(&events, &reference);
+
+        let fifths = song.score.key.as_ref().map(|key| key_fifths(key)).unwrap_or(0);
+
+        Some(PartPhrases {
+            events,
+            segments,
+            header: build_excerpt_header(song, settings),
+            unit: parse_unit_note_length(&settings.unit_note_length),
+            key: key_alterations(fifths),
+        })
+    }
+
+    /// How many phrases the melody has — one per lyrics line.
+    pub fn len(&self) -> usize {
+        self.segments.len()
+    }
+
+    /// Whether the part has no phrases at all.
+    pub fn is_empty(&self) -> bool {
+        self.segments.is_empty()
+    }
+
+    /// How many syllables the phrase at `index` carries.
+    pub fn syllables(&self, index: usize) -> usize {
+        self.segments.get(index).map_or(0, |(_, _, count)| *count)
+    }
+
+    /// A standalone ABC tune covering the phrases in `lines`.
+    ///
+    /// The result is a complete tune with its own header, so it can be handed
+    /// to an ABC renderer as-is. Accidentals are resolved against the key
+    /// signature from scratch, which is correct for an excerpt: a sharp that an
+    /// earlier bar established is written out again rather than assumed.
+    ///
+    /// Returns `None` for an empty or out-of-range request.
+    pub fn excerpt(&self, lines: std::ops::Range<usize>) -> Option<String> {
+        let first = self.segments.get(lines.start)?;
+        let last = self.segments.get(lines.end.checked_sub(1)?)?;
+
+        let mut bar = BarAccidentals::default();
+        let music = render_events(&self.events[first.0..last.1], &self.key, self.unit, &mut bar);
+        if music.trim().is_empty() {
+            return None;
+        }
+
+        Some(format!("{}{}\n", self.header, music))
+    }
+
+    /// How many syllables the phrases in `lines` carry in total.
+    pub fn syllables_in(&self, lines: std::ops::Range<usize>) -> usize {
+        self.segments[lines.start.min(self.segments.len())..lines.end.min(self.segments.len())]
+            .iter()
+            .map(|(_, _, count)| count)
+            .sum()
+    }
+}
+
+/// The header of an excerpt tune.
+///
+/// Unlike a full export this leaves out `T:` and `C:` — a slide shows the title
+/// elsewhere, and an ABC renderer would print it above the staff.
+fn build_excerpt_header(song: &Song, settings: &AbcSettings) -> String {
+    let mut header = String::from("X:1\n");
+
+    match &song.score.time {
+        Some(time) => header.push_str(&format!("M:{}\n", time)),
+        None => header.push_str("M:none\n"),
+    }
+    header.push_str(&format!("L:{}\n", settings.unit_note_length));
+
+    let key = song
+        .score
+        .key
+        .as_ref()
+        .map(|key| convert_key_to_abc(key))
+        .unwrap_or_else(|| "C".to_string());
+    header.push_str(&format!("K:{}\n", key));
+
+    header
+}
+
 /// Generate a complete ABC notation file from a [`crate::song::Song`].
 ///
 /// The result contains the header fields, the melody and one `w:` lyrics line

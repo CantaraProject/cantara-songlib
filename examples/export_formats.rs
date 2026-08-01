@@ -9,7 +9,9 @@ use cantara_songlib::exporter::abc::{abc_from_song, AbcSettings};
 use cantara_songlib::exporter::lilypond::{lilypond_from_song, LilypondSettings};
 use cantara_songlib::exporter::slides::slides_from_song;
 use cantara_songlib::importer::song_yml;
-use cantara_songlib::slides::SlideSettings;
+use cantara_songlib::slides::{
+    LanguageConfiguration, SlideContent, SlideElement, SlideRowKind, SlideSettings,
+};
 use cantara_songlib::song::Song;
 
 const SONG_FILE: &str = "tests/data/Sei nicht stolz auf das, was du bist.song.yml";
@@ -24,6 +26,38 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let slides = slides_from_song(&song, &SlideSettings::default());
     for (index, slide) in slides.iter().enumerate() {
         println!("  slide {}: {:?}", index + 1, slide.slide_content);
+    }
+
+    println!("\n=== Complex slides: notation + lyrics, two lines each ===");
+    let complex = SlideSettings {
+        language: LanguageConfiguration::Complex(vec![
+            SlideElement::Notation,
+            SlideElement::Lyrics("de".to_string()),
+        ]),
+        max_lines: Some(2),
+        title_slide: false,
+        empty_last_slide: false,
+        ..SlideSettings::default()
+    };
+    for (index, slide) in slides_from_song(&song, &complex).iter().enumerate() {
+        let SlideContent::Complex(slide) = &slide.slide_content else {
+            continue;
+        };
+        println!("  slide {} — {} lyrics lines", index + 1, slide.line_count);
+        for row in &slide.rows {
+            match &row.kind {
+                SlideRowKind::Notation { syllables } => println!(
+                    "    notation ({} syllables): {}",
+                    syllables,
+                    row.content.lines().last().unwrap_or_default()
+                ),
+                SlideRowKind::Lyrics { language } => println!(
+                    "    {}: {}",
+                    language.as_deref().unwrap_or("(no language stated)"),
+                    row.content.replace('\n', " / ")
+                ),
+            }
+        }
     }
 
     println!("\n=== LilyPond ===");

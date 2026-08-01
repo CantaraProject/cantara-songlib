@@ -39,6 +39,8 @@ pub enum SlideContent {
     SingleLanguageMainContent(SingleLanguageMainContentSlide),
     Title(TitleSlide),
     MultiLanguageMainContent(MultiLanguageMainContentSlide),
+    /// Notation and any number of languages stacked on one slide
+    Complex(ComplexSlide),
     SimplePicture(SimplePictureSlide),
     Empty(EmptySlide),
     /// A slide that displays a single page from a PDF document
@@ -137,6 +139,28 @@ impl Slide {
         }
     }
 
+    /// A slide showing notation and/or several languages stacked on top of one
+    /// another. See [`ComplexSlide`].
+    pub fn new_complex_slide(
+        rows: Vec<SlideRow>,
+        spoiler: Vec<SlideRow>,
+        meta_text: Option<String>,
+        line_count: usize,
+    ) -> Self {
+        Slide {
+            slide_content: SlideContent::Complex(ComplexSlide {
+                rows,
+                spoiler,
+                meta_text: match meta_text {
+                    Some(text) if !text.trim().is_empty() => Some(text.trim().to_string()),
+                    _ => None,
+                },
+                line_count,
+            }),
+            linked_file: None,
+        }
+    }
+
     pub fn with_song_file(self, linked_file: SongFile) -> Self {
         let mut cloned_self = self.clone();
         cloned_self.linked_file = Some(linked_file);
@@ -155,6 +179,7 @@ impl Slide {
                     .spoiler_text_vector
                     .is_empty()
             }
+            SlideContent::Complex(complex) => !complex.spoiler.is_empty(),
             SlideContent::SimplePicture(_) => false,
             SlideContent::Empty(_) => false,
             SlideContent::PdfPage(_) => false,
@@ -170,6 +195,7 @@ impl Slide {
             SlideContent::MultiLanguageMainContent(multi_language_main_content_slide) => {
                 multi_language_main_content_slide.meta_text.is_some()
             }
+            SlideContent::Complex(complex) => complex.meta_text.is_some(),
             SlideContent::SimplePicture(_) => false,
             SlideContent::Empty(_) => false,
             SlideContent::PdfPage(_) => false,
@@ -258,6 +284,141 @@ pub struct PdfPageSlide {
     pub page_number: u32,
 }
 
+/// A slide that stacks several representations of the same passage: the
+/// melody as notation and the lyrics in one or more languages.
+///
+/// Every row covers **the same passage of the song**. The notation row spans
+/// exactly the lyrics lines that the text rows below it show, so the notes and
+/// the words line up — that is the point of this slide type.
+///
+/// ```text
+/// ┌──────────────────────────────────────────────┐
+/// │ X:1 M:3/4 L:1/4 K:F  C | F2 (A/ F/) | A2 G … │  ← Notation row
+/// │ Amazing grace, how sweet the sound            │  ← Lyrics row "en"
+/// │ Oh teure Gnade wunderbar                      │  ← Lyrics row "de"
+/// │                                               │
+/// │ That saved a wretch like me.                  │  ← spoiler (text only)
+/// └──────────────────────────────────────────────┘
+/// ```
+#[derive(Clone, Serialize, Deserialize, PartialEq, Debug)]
+pub struct ComplexSlide {
+    /// The rows, in the order the user asked for them.
+    pub rows: Vec<SlideRow>,
+    /// A preview of the next slide. Text only — notation is not repeated
+    /// because a spoiler is meant to be small.
+    pub spoiler: Vec<SlideRow>,
+    /// Meta information, placed according to
+    /// [`crate::slides::ShowMetaInformation`].
+    pub meta_text: Option<String>,
+    /// How many lyrics lines of the song this slide covers.
+    ///
+    /// Every row spans these same lines, which is what makes the notation match
+    /// the text. Wrapping by [`SlideSettings::max_lines`] works on this count.
+    pub line_count: usize,
+}
+
+/// One row of a [`ComplexSlide`].
+#[derive(Clone, Serialize, Deserialize, PartialEq, Debug)]
+pub struct SlideRow {
+    /// What this row shows.
+    pub kind: SlideRowKind,
+    /// The row's content: a complete ABC tune for a notation row, the lyrics
+    /// lines joined by newlines for a lyrics row.
+    pub content: String,
+}
+
+impl SlideRow {
+    /// A notation row holding a standalone ABC tune.
+    pub fn notation(abc: impl Into<String>, syllables: usize) -> SlideRow {
+        SlideRow {
+            kind: SlideRowKind::Notation { syllables },
+            content: abc.into(),
+        }
+    }
+
+    /// A lyrics row. `language` is `None` when the song carries no language
+    /// information at all, which is the case for the classic `.song` format.
+    pub fn lyrics(language: Option<String>, text: impl Into<String>) -> SlideRow {
+        SlideRow {
+            kind: SlideRowKind::Lyrics { language },
+            content: text.into(),
+        }
+    }
+
+    /// Whether this row carries notation rather than text.
+    pub fn is_notation(&self) -> bool {
+        matches!(self.kind, SlideRowKind::Notation { .. })
+    }
+}
+
+/// What a [`SlideRow`] shows.
+#[derive(Clone, Serialize, Deserialize, PartialEq, Debug)]
+pub enum SlideRowKind {
+    /// The melody as ABC notation.
+    Notation {
+        /// How many syllables the notation covers. A frontend can use this to
+        /// check that the notes and the text below really do match up.
+        syllables: usize,
+    },
+    /// Lyrics in a language, or unlabelled lyrics when `language` is `None`.
+    Lyrics {
+        /// The language code, e.g. `"en"`. `None` means the song stated no
+        /// language — see [`LanguageConfiguration::Complex`].
+        language: Option<String>,
+    },
+}
+
+/// One row that a complex presentation should show.
+///
+/// ```
+/// use cantara_songlib::slides::{LanguageConfiguration, SlideElement};
+///
+/// // "notation + english + german"
+/// let layout = LanguageConfiguration::Complex(vec![
+///     SlideElement::Notation,
+///     SlideElement::Lyrics("en".to_string()),
+///     SlideElement::Lyrics("de".to_string()),
+/// ]);
+/// # let _ = layout;
+/// ```
+#[derive(Clone, Serialize, Deserialize, PartialEq, Eq, Debug)]
+pub enum SlideElement {
+    /// The melody as ABC notation, covering exactly the lyrics shown below it.
+    Notation,
+    /// The lyrics in the given language.
+    Lyrics(String),
+}
+
+impl SlideElement {
+    /// Parse a row description such as `"notation"`, `"abc"`, `"noten"` or a
+    /// language code.
+    ///
+    /// Anything that is not a notation keyword is taken to be a language code,
+    /// which is what makes `--show notation,en,de` work.
+    ///
+    /// ```
+    /// use cantara_songlib::slides::SlideElement;
+    ///
+    /// assert_eq!("Noten".parse(), Ok(SlideElement::Notation));
+    /// assert_eq!("abc".parse(), Ok(SlideElement::Notation));
+    /// assert_eq!("de".parse(), Ok(SlideElement::Lyrics("de".to_string())));
+    /// ```
+    pub fn parse(text: &str) -> SlideElement {
+        match text.trim().to_lowercase().as_str() {
+            "notation" | "notes" | "noten" | "abc" | "score" | "music" => SlideElement::Notation,
+            language => SlideElement::Lyrics(language.to_string()),
+        }
+    }
+}
+
+impl std::str::FromStr for SlideElement {
+    type Err = std::convert::Infallible;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Ok(SlideElement::parse(s))
+    }
+}
+
 /// Configuration for which language(s) to display on presentation slides
 #[derive(Clone, Serialize, Deserialize, PartialEq, Debug)]
 pub enum LanguageConfiguration {
@@ -268,6 +429,15 @@ pub enum LanguageConfiguration {
     /// Multi-language mode: display lyrics in multiple languages on each slide.
     /// Languages are shown in the order specified. If the list is empty, all available languages are used.
     MultiLanguage(Vec<String>),
+
+    /// Complex mode: stack notation and any number of languages on each slide,
+    /// in the given order. Produces [`SlideContent::Complex`] slides.
+    ///
+    /// A song without any language information — a classic `.song` file, say —
+    /// has its unlabelled lyrics shown in place of the **first** requested
+    /// language. The remaining language rows are then left out rather than
+    /// repeating the same text under a different heading.
+    Complex(Vec<SlideElement>),
 }
 
 impl Default for LanguageConfiguration {

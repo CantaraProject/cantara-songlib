@@ -121,23 +121,29 @@ fn song_from_yml(yml: SongYmlFile) -> Result<Song, Box<dyn Error>> {
             continue;
         }
 
-        // Each numbered lyrics entry becomes a part of its own. The first one
-        // carries the music; the others reference it, so the melody is stored
-        // exactly once.
+        // Lyrics entries are grouped by their `number`: entries sharing a
+        // number are the same verse in different languages and belong on one
+        // part, while different numbers are different verses.
+        //
+        // The first group carries the music; the others reference it, so the
+        // melody is stored exactly once.
+        let mut groups: Vec<(Option<u32>, Vec<&SongYmlContent>)> = Vec::new();
+        for lyrics in &lyrics_contents {
+            match lyrics.number.and_then(|number| {
+                groups
+                    .iter_mut()
+                    .find(|(key, _)| *key == Some(number))
+            }) {
+                Some((_, group)) => group.push(lyrics),
+                // An entry without a number is always a verse of its own.
+                None => groups.push((lyrics.number, vec![lyrics])),
+            }
+        }
+
         let mut first_id: Option<SongPartId> = None;
 
-        for lyrics in &lyrics_contents {
-            let id = song.add_part_of_type(part_type, lyrics.number);
-
-            // Determine the lyrics language, falling back to the song default.
-            let language = match &lyrics.language {
-                Some(code) => LyricLanguage::specific(code),
-                None => match &yml.default_language {
-                    Some(default) => LyricLanguage::specific(default),
-                    None => LyricLanguage::Default,
-                },
-            };
-
+        for (number, group) in &groups {
+            let id = song.add_part_of_type(part_type, *number);
             let part = song.part_mut(&id).unwrap();
 
             if first_id.is_none() {
@@ -154,7 +160,18 @@ fn song_from_yml(yml: SongYmlFile) -> Result<Song, Box<dyn Error>> {
                 part.is_repetition_of = first_id;
             }
 
-            part.add_content(SongPartContent::lyrics(language, lyrics.content.trim()));
+            for lyrics in group {
+                // An entry without an explicit language is in the song's
+                // default language; without that it stays unlabelled.
+                let language = match &lyrics.language {
+                    Some(code) => LyricLanguage::specific(code),
+                    None => match &yml.default_language {
+                        Some(default) => LyricLanguage::specific(default),
+                        None => LyricLanguage::Default,
+                    },
+                };
+                part.add_content(SongPartContent::lyrics(language, lyrics.content.trim()));
+            }
 
             if first_id.is_none() {
                 first_id = Some(id);

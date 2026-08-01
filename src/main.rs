@@ -4,7 +4,9 @@ use cantara_songlib::exporter;
 use cantara_songlib::exporter::abc::AbcSettings;
 use cantara_songlib::exporter::lilypond::LilypondSettings;
 use cantara_songlib::importer::import_song_from_file;
-use cantara_songlib::slides::{LanguageConfiguration, ShowMetaInformation, SlideSettings};
+use cantara_songlib::slides::{
+    LanguageConfiguration, ShowMetaInformation, SlideElement, SlideSettings,
+};
 use cantara_songlib::templating::MetaTemplate;
 use cantara_songlib::slides_from_file;
 
@@ -62,6 +64,16 @@ enum Commands {
         /// If no languages are specified, all available languages are used.
         #[arg(short, long, value_name = "LANGS")]
         multi_language: Option<Option<String>>,
+
+        /// Complex layout: stack notation and any number of languages on each
+        /// slide, in the given order. Use "notation" (or "abc") for the melody
+        /// and a language code for lyrics, e.g. --show notation,en,de
+        #[arg(long, value_name = "ROWS", value_delimiter = ',')]
+        show: Vec<String>,
+
+        /// Maximum number of lyrics lines per slide; longer parts are wrapped
+        #[arg(long, value_name = "N")]
+        max_lines: Option<usize>,
 
         /// Handlebars template for the meta information line, e.g.
         /// "{{title}} ({{author}})". Available variables are the song's tags
@@ -124,11 +136,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Commands::Presentation {
             language,
             multi_language,
+            show,
+            max_lines,
             meta_syntax,
             show_meta,
             no_title_slide,
         } => {
-            let lang_config = if let Some(multi) = multi_language {
+            let lang_config = if !show.is_empty() {
+                // --show wins: it is the most specific of the three.
+                LanguageConfiguration::Complex(
+                    show.iter().map(|row| SlideElement::parse(row)).collect(),
+                )
+            } else if let Some(multi) = multi_language {
                 // --multi-language was passed
                 let langs: Vec<String> = match multi {
                     Some(s) => s.split(',').map(|l| l.trim().to_string()).collect(),
@@ -146,6 +165,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
             let settings = SlideSettings {
                 language: lang_config,
+                max_lines: *max_lines,
                 title_slide: !no_title_slide,
                 meta_syntax: meta_syntax.clone(),
                 show_meta_information: MetaPosition::to_settings(show_meta),

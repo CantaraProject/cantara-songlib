@@ -89,6 +89,7 @@ pub mod song;
 #[doc = include_str!("../docs/abc-export.md")]
 #[doc = include_str!("../docs/ccli-import.md")]
 #[doc = include_str!("../docs/meta-information.md")]
+#[doc = include_str!("../docs/complex-slides.md")]
 pub struct DocumentationExamples;
 
 pub mod importer;

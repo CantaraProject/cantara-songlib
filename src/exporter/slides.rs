@@ -2,7 +2,10 @@
 //! Generates presentation slides from any Song, regardless of the import format.
 //! Supports both single-language and multi-language slide generation.
 
-use crate::slides::{wrap_blocks, LanguageConfiguration, Slide, SlideSettings};
+use crate::exporter::abc::{AbcSettings, PartPhrases};
+use crate::slides::{
+    wrap_blocks, LanguageConfiguration, Slide, SlideElement, SlideRow, SlideSettings,
+};
 use crate::song::{LyricLanguage, Song, SongPart};
 use crate::templating::MetaTemplate;
 
@@ -234,13 +237,297 @@ fn generate_multi_language_slides(
     slides
 }
 
+// ---------------------------------------------------------------------------
+// Complex slides: notation plus any number of languages
+// ---------------------------------------------------------------------------
+
+/// The position of each element among the *language* elements.
+///
+/// The fallback for a song without language information applies to the first
+/// requested **language**, which is not the first row when notation comes
+/// first. `None` marks a notation element.
+fn language_positions(elements: &[SlideElement]) -> Vec<Option<usize>> {
+    let mut next = 0;
+    elements
+        .iter()
+        .map(|element| match element {
+            SlideElement::Notation => None,
+            SlideElement::Lyrics(_) => {
+                let position = next;
+                next += 1;
+                Some(position)
+            }
+        })
+        .collect()
+}
+
+/// One chunk of a song part: the lyrics lines it covers, per requested element.
+struct Chunk<'song> {
+    part: &'song SongPart,
+    /// Which of the part's lyrics lines this chunk covers.
+    lines: std::ops::Range<usize>,
+    /// The text of each requested element, `None` where the song has nothing.
+    /// Parallel to the requested elements; the notation entry is always `None`.
+    texts: Vec<Option<String>>,
+}
+
+/// Generate [`SlideContent::Complex`] slides.
+///
+/// Each part of the song is cut into chunks of at most
+/// [`SlideSettings::max_lines`] lyrics lines, and every chunk becomes one
+/// slide whose rows all cover exactly those lines.
+fn generate_complex_slides(
+    song: &Song,
+    settings: &SlideSettings,
+    elements: &[SlideElement],
+) -> Vec<Slide> {
+    let mut slides: Vec<Slide> = Vec::new();
+    let meta_text = build_meta_text(song, settings);
+
+    if settings.title_slide {
+        slides.push(Slide::new_title_slide(
+            song.title.clone(),
+            meta_for_title_slide(&meta_text, settings),
+        ));
+    }
+
+    let positions = language_positions(elements);
+    let chunks = build_chunks(song, settings, elements, &positions);
+    let abc_settings = AbcSettings::default();
+
+    let count = chunks.len();
+    for (index, chunk) in chunks.iter().enumerate() {
+        let mut rows: Vec<SlideRow> = Vec::new();
+
+        for (slot, element) in elements.iter().enumerate() {
+            match element {
+                SlideElement::Notation => {
+                    if let Some(row) = notation_row(song, chunk, &abc_settings) {
+                        rows.push(row);
+                    }
+                }
+                SlideElement::Lyrics(language) => {
+                    if let Some(text) = &chunk.texts[slot] {
+                        let position = positions[slot].unwrap_or(0);
+                        rows.push(SlideRow::lyrics(
+                            language_label(song, chunk.part, language, position),
+                            text.clone(),
+                        ));
+                    }
+                }
+            }
+        }
+
+        // A chunk that produced nothing at all would be a blank slide.
+        if rows.is_empty() {
+            continue;
+        }
+
+        // The spoiler previews the next chunk, text only.
+        let spoiler: Vec<SlideRow> = if settings.show_spoiler {
+            chunks
+                .get(index + 1)
+                .map(|next| text_rows(song, next, elements, &positions))
+                .unwrap_or_default()
+        } else {
+            Vec::new()
+        };
+
+        slides.push(Slide::new_complex_slide(
+            rows,
+            spoiler,
+            meta_for_position(&meta_text, settings, index, count),
+            chunk.lines.len(),
+        ));
+    }
+
+    if settings.empty_last_slide {
+        slides.push(Slide::new_empty_slide(false));
+    }
+
+    slides
+}
+
+/// Cut every part of the song into chunks of at most `max_lines` lyrics lines.
+///
+/// The number of lines a part has is taken from the first requested language
+/// that the part actually carries, so all rows of a slide are cut at the same
+/// place.
+fn build_chunks<'song>(
+    song: &'song Song,
+    settings: &SlideSettings,
+    elements: &[SlideElement],
+    positions: &[Option<usize>],
+) -> Vec<Chunk<'song>> {
+    let mut chunks: Vec<Chunk> = Vec::new();
+
+    for part in song.ordered_parts() {
+        // The lyrics of every requested language, as lines.
+        let per_element: Vec<Option<Vec<String>>> = elements
+            .iter()
+            .enumerate()
+            .map(|(slot, element)| match element {
+                SlideElement::Notation => None,
+                SlideElement::Lyrics(language) => {
+                    lyrics_lines(song, part, language, positions[slot].unwrap_or(0))
+                }
+            })
+            .collect();
+
+        // How many lines the part has: the longest of the requested languages.
+        let line_count = per_element
+            .iter()
+            .flatten()
+            .map(|lines| lines.len())
+            .max()
+            .unwrap_or(0);
+
+        if line_count == 0 {
+            continue;
+        }
+
+        let step = settings.max_lines.unwrap_or(line_count).max(1);
+
+        let mut start = 0;
+        while start < line_count {
+            let end = (start + step).min(line_count);
+
+            let texts = per_element
+                .iter()
+                .map(|lines| {
+                    lines.as_ref().and_then(|lines| {
+                        let slice = &lines[start.min(lines.len())..end.min(lines.len())];
+                        if slice.is_empty() {
+                            None
+                        } else {
+                            Some(slice.join("\n"))
+                        }
+                    })
+                })
+                .collect();
+
+            chunks.push(Chunk {
+                part,
+                lines: start..end,
+                texts,
+            });
+            start = end;
+        }
+    }
+
+    chunks
+}
+
+/// The lyrics of a part in one requested language, as lines.
+///
+/// The **first** requested language falls back to the song's unlabelled lyrics,
+/// which is what makes a classic `.song` file — a format with no language
+/// information at all — show its text under the first heading. Later languages
+/// do not fall back; repeating the same text under a second heading would be
+/// misleading.
+fn lyrics_lines(
+    song: &Song,
+    part: &SongPart,
+    language: &str,
+    position: usize,
+) -> Option<Vec<String>> {
+    let content = part
+        .lyrics_in(&LyricLanguage::specific(language))
+        .or_else(|| {
+            // `LyricLanguage::Default` counts as the song's default language.
+            part.all_lyrics()
+                .find(|(candidate, _)| {
+                    candidate.matches(language, song.default_language.as_deref())
+                })
+                .map(|(_, content)| content)
+        })
+        .or_else(|| {
+            if position == 0 {
+                part.lyrics_in(&LyricLanguage::Default)
+            } else {
+                None
+            }
+        })?;
+
+    let cleaned = strip_lilypond_markers(&content.content);
+    let lines: Vec<String> = cleaned
+        .lines()
+        .map(|line| line.to_string())
+        .filter(|line| !line.trim().is_empty())
+        .collect();
+
+    if lines.is_empty() {
+        None
+    } else {
+        Some(lines)
+    }
+}
+
+/// The language to report for a row.
+///
+/// `None` when the text came from the song's unlabelled lyrics, so a frontend
+/// can tell "this is English" from "this song never said".
+fn language_label(
+    song: &Song,
+    part: &SongPart,
+    language: &str,
+    position: usize,
+) -> Option<String> {
+    let stated = part
+        .all_lyrics()
+        .any(|(candidate, _)| candidate.matches(language, song.default_language.as_deref()));
+
+    if stated {
+        Some(language.to_string())
+    } else if position == 0 {
+        None
+    } else {
+        Some(language.to_string())
+    }
+}
+
+/// The notation row for a chunk: the melody of exactly its lyrics lines.
+fn notation_row(song: &Song, chunk: &Chunk, settings: &AbcSettings) -> Option<SlideRow> {
+    let phrases = PartPhrases::of(song, chunk.part, settings)?;
+
+    // The melody is split along the part's own lyrics, so a chunk that runs
+    // past the last phrase is clamped rather than dropped.
+    let lines = chunk.lines.start.min(phrases.len())..chunk.lines.end.min(phrases.len());
+    let abc = phrases.excerpt(lines.clone())?;
+
+    Some(SlideRow::notation(abc, phrases.syllables_in(lines)))
+}
+
+/// The text rows of a chunk, used for the spoiler.
+fn text_rows(
+    song: &Song,
+    chunk: &Chunk,
+    elements: &[SlideElement],
+    positions: &[Option<usize>],
+) -> Vec<SlideRow> {
+    elements
+        .iter()
+        .enumerate()
+        .filter_map(|(slot, element)| match element {
+            SlideElement::Notation => None,
+            SlideElement::Lyrics(language) => chunk.texts[slot].as_ref().map(|text| {
+                SlideRow::lyrics(
+                    language_label(song, chunk.part, language, positions[slot].unwrap_or(0)),
+                    text.clone(),
+                )
+            }),
+        })
+        .collect()
+}
+
 /// Generate presentation slides from a Song struct.
 ///
 /// This is the generic converter that works with any Song, whether it was
 /// imported from .song, .song.yml, .cssf, or constructed programmatically.
 ///
-/// The `LanguageConfiguration` in `SlideSettings` controls whether
-/// single-language or multi-language slides are generated.
+/// The `LanguageConfiguration` in `SlideSettings` picks the layout: one
+/// language, several languages side by side, or the complex layout that stacks
+/// notation and any number of languages.
 pub fn slides_from_song(song: &Song, settings: &SlideSettings) -> Vec<Slide> {
     match &settings.language {
         LanguageConfiguration::SingleLanguage(lang) => {
@@ -248,6 +535,9 @@ pub fn slides_from_song(song: &Song, settings: &SlideSettings) -> Vec<Slide> {
         }
         LanguageConfiguration::MultiLanguage(langs) => {
             generate_multi_language_slides(song, settings, langs)
+        }
+        LanguageConfiguration::Complex(elements) => {
+            generate_complex_slides(song, settings, elements)
         }
     }
 }

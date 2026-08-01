@@ -18,6 +18,7 @@ It is part of the effort to rewrite [Cantara](https://github.com/reckel-jm/canta
 | [docs/abc-export.md](docs/abc-export.md) | ABC notation export |
 | [docs/ccli-import.md](docs/ccli-import.md) | Reading CCLI SongSelect exports in any language |
 | [docs/meta-information.md](docs/meta-information.md) | The meta information line on slides: template and placement |
+| [docs/complex-slides.md](docs/complex-slides.md) | Slides stacking notation and several languages |
 
 ## Repository layout
 
