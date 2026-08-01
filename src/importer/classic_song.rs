@@ -245,12 +245,20 @@ pub fn slides_from_classic_song(
         }
         else {
             match writing_area {
+                // Only separate a line from an existing one. Prepending the
+                // newline unconditionally left every block with a leading
+                // empty line, which `wrap_blocks` counts against `max_lines`
+                // even though `Slide::new_content_slide` trims it away again.
                 WritingArea::MainBlock => {
-                    cur_block_string.push('\n');
+                    if !cur_block_string.is_empty() {
+                        cur_block_string.push('\n');
+                    }
                     cur_block_string.push_str(line);
                 },
                 WritingArea::SecondaryBlock => {
-                    cur_secundary_block_string.push('\n');
+                    if !cur_secundary_block_string.is_empty() {
+                        cur_secundary_block_string.push('\n');
+                    }
                     cur_secundary_block_string.push_str(line);
                 }
             }
@@ -605,6 +613,79 @@ mod test {
             "the fallback title is missing from the meta line: {}",
             rendered
         );
+    }
+
+    /// Line counts of the content slides, in order.
+    fn main_text_line_counts(slides: &[Slide]) -> Vec<usize> {
+        slides
+            .iter()
+            .filter_map(|slide| match &slide.slide_content {
+                SlideContent::SingleLanguageMainContent(content) => {
+                    Some(content.clone().main_text().lines().count())
+                }
+                _ => None,
+            })
+            .collect()
+    }
+
+    fn wrapping_settings(max_lines: Option<usize>) -> SlideSettings {
+        SlideSettings {
+            title_slide: false,
+            meta_syntax: "".to_string(),
+            show_meta_information: ShowMetaInformation::none(),
+            empty_last_slide: false,
+            show_spoiler: false,
+            max_lines,
+            language: crate::slides::LanguageConfiguration::default(),
+        }
+    }
+
+    /// `max_lines` has to count the lines that actually reach the slide.
+    ///
+    /// The blocks used to be built with a leading empty line, which
+    /// `wrap_blocks` counted against the limit even though
+    /// `Slide::new_content_slide` trims it away again. That cost every block's
+    /// first chunk one line: these four-line verses came out as 2+2 under a
+    /// limit of three instead of filling the limit at 3+1.
+    #[test]
+    fn test_max_lines_is_not_spent_on_a_leading_empty_line() {
+        let testfile =
+            std::fs::read_to_string("tests/data/O What A Savior That He Died For Me.song").unwrap();
+
+        // The song is eight blocks of four lines each.
+        let unwrapped = slides_from_classic_song(
+            &testfile,
+            &wrapping_settings(None),
+            "Verily".to_string(),
+        );
+        assert_eq!(main_text_line_counts(&unwrapped), vec![4; 8]);
+
+        let wrapped = slides_from_classic_song(
+            &testfile,
+            &wrapping_settings(Some(3)),
+            "Verily".to_string(),
+        );
+        assert_eq!(
+            main_text_line_counts(&wrapped),
+            [3, 1].repeat(8),
+            "a four-line block under a limit of three must fill the first slide"
+        );
+    }
+
+    /// A block that is exactly `max_lines` long must not be split at all.
+    /// The phantom leading line used to push it one over the limit.
+    #[test]
+    fn test_block_of_exactly_max_lines_is_not_wrapped() {
+        let testfile =
+            std::fs::read_to_string("tests/data/O What A Savior That He Died For Me.song").unwrap();
+
+        let slides = slides_from_classic_song(
+            &testfile,
+            &wrapping_settings(Some(4)),
+            "Verily".to_string(),
+        );
+
+        assert_eq!(main_text_line_counts(&slides), vec![4; 8]);
     }
 
 }
