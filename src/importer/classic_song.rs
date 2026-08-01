@@ -325,31 +325,25 @@ pub fn slides_from_classic_song(
             false => None,
         };
         
+        // A stanza's secondary block (everything after a `---`) is a second
+        // language, not a preview. It shares the spoiler field with the preview
+        // of the next stanza, but it is content in its own right, so
+        // `show_spoiler` does not suppress it — that setting only governs the
+        // preview shown for stanzas that have no secondary block.
         let secondary_block = secondary_blocks.get(index).unwrap();
-        if secondary_block.is_empty() {
-            match blocks.get(index+1) {
-                Some(next_block) => {
-                    slides.push(
-                        Slide::new_content_slide(block.join("\n"), Some(next_block.join("\n")), displayed_meta_text)
-                    )       
-                },
-                None => {
-                    slides.push(
-                        Slide::new_content_slide(
-                            block.join("\n"), None, 
-                            displayed_meta_text
-                        )
-                    )
-                }
-            }
+        let secondary_text = if !secondary_block.is_empty() {
+            Some(secondary_block.join("\n"))
+        } else if slide_settings.show_spoiler {
+            blocks.get(index + 1).map(|next_block| next_block.join("\n"))
         } else {
-            slides.push(
-                Slide::new_content_slide(block.join("\n"),
-                    Some(secondary_block.join("\n")), 
-                    displayed_meta_text
-                )
-            );
-        }
+            None
+        };
+
+        slides.push(Slide::new_content_slide(
+            block.join("\n"),
+            secondary_text,
+            displayed_meta_text,
+        ));
     }
     
     if slide_settings.empty_last_slide {
@@ -780,6 +774,82 @@ mod test {
             assert_eq!(main.len(), 4);
             assert_eq!(secondary.len(), 4);
         }
+    }
+
+    /// The spoiler texts of the content slides, in order.
+    fn spoilers(slides: &[Slide]) -> Vec<Option<String>> {
+        slides
+            .iter()
+            .filter_map(|slide| match &slide.slide_content {
+                SlideContent::SingleLanguageMainContent(content) => {
+                    Some(content.clone().spoiler_text())
+                }
+                _ => None,
+            })
+            .collect()
+    }
+
+    fn spoiler_settings(show_spoiler: bool) -> SlideSettings {
+        SlideSettings {
+            show_spoiler,
+            ..wrapping_settings(None)
+        }
+    }
+
+    /// `show_spoiler` governs the preview of the *next* stanza. A second
+    /// language behind `---` is content, so it survives `show_spoiler: false`
+    /// even though it travels in the same field.
+    #[test]
+    fn test_show_spoiler_does_not_suppress_the_second_language() {
+        let testfile = std::fs::read_to_string("tests/data/Bilingual Test Song.song").unwrap();
+
+        let slides = slides_from_classic_song(
+            &testfile,
+            &spoiler_settings(false),
+            "Bilingual Test Song".to_string(),
+        );
+
+        for spoiler in spoilers(&slides) {
+            let spoiler = spoiler.expect("the translation is not a spoiler and must stay");
+            assert!(
+                spoiler.starts_with("Neben Strophe"),
+                "expected the translation, got {:?}",
+                spoiler
+            );
+        }
+    }
+
+    /// Without a secondary block the spoiler is a preview of the next stanza,
+    /// and that is exactly what `show_spoiler: false` has to switch off. This
+    /// setting was previously ignored in this code path.
+    #[test]
+    fn test_show_spoiler_suppresses_the_preview_of_the_next_stanza() {
+        let testfile =
+            std::fs::read_to_string("tests/data/O What A Savior That He Died For Me.song").unwrap();
+
+        let shown = spoilers(&slides_from_classic_song(
+            &testfile,
+            &spoiler_settings(true),
+            "Verily".to_string(),
+        ));
+        // Every stanza but the last previews its successor.
+        assert!(
+            shown[..shown.len() - 1].iter().all(|spoiler| spoiler.is_some()),
+            "previews are on: {:?}",
+            shown
+        );
+        assert_eq!(shown.last().unwrap(), &None, "the last stanza has no successor");
+
+        let hidden = spoilers(&slides_from_classic_song(
+            &testfile,
+            &spoiler_settings(false),
+            "Verily".to_string(),
+        ));
+        assert!(
+            hidden.iter().all(|spoiler| spoiler.is_none()),
+            "previews are off: {:?}",
+            hidden
+        );
     }
 
 }
