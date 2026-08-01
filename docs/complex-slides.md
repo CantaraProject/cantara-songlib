@@ -119,6 +119,42 @@ every system carries its own `w:` line, a mismatch stays local:
 `SlideRowKind::Notation { syllables }` reports how many syllables the row
 covers, so a frontend can check the alignment itself.
 
+## Text that is shown twice
+
+The notation carries the words of the first requested language under its notes,
+so the lyrics row for that language repeats them. Both rows are produced — a
+layout may well want the text again in a size the congregation can read from the
+back — but the repeat is flagged:
+
+```rust
+# use cantara_songlib::exporter::slides::slides_from_song;
+# use cantara_songlib::importer::import_song_from_file;
+# use cantara_songlib::slides::*;
+# let song = import_song_from_file("tests/data/Amazing Grace.song.yml").unwrap();
+# let settings = SlideSettings {
+#     language: LanguageConfiguration::Complex(vec![
+#         SlideElement::Notation,
+#         SlideElement::Lyrics("en".to_string()),
+#     ]),
+#     title_slide: false, empty_last_slide: false,
+#     ..SlideSettings::default()
+# };
+let slides = slides_from_song(&song, &settings);
+let SlideContent::Complex(slide) = &slides[0].slide_content else { panic!() };
+
+assert!(!slide.rows[0].redundant);   // the notation
+assert!(slide.rows[1].redundant);    // its words, printed again
+
+// A layout that does not want the repetition:
+assert_eq!(slide.rows_without_repetition().count(), 1);
+```
+
+The flag follows the first requested language, so `--show notation,de,en` marks
+the German row and leaves the English one alone. Nothing is flagged when there
+is no notation row — because none was asked for, or because the song has no
+melody — and spoiler rows are never flagged, since a spoiler carries no
+notation.
+
 ## Wrapping
 
 `max_lines` limits how many lyrics lines go on one slide, and the notation

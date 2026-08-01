@@ -1,6 +1,8 @@
 //! This crate also provides a very small wrapper cli for directly converting and parsing song files.
 
 use cantara_songlib::exporter;
+use cantara_songlib::exporter::slides::chapters_from_songs;
+use cantara_songlib::exporter::text::{text_from_songs, TextFormat, TextSettings};
 use cantara_songlib::exporter::abc::AbcSettings;
 use cantara_songlib::exporter::lilypond::LilypondSettings;
 use cantara_songlib::importer::import_song_from_file;
@@ -15,13 +17,15 @@ use std::path::PathBuf;
 
 #[derive(Parser)]
 #[command(version, about)]
+#[command(subcommand_precedence_over_arg = true)]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
 
-    /// The input file which is to be used
+    /// The song file(s) to read. The `text` and `presentation` commands accept
+    /// several; the music formats take exactly one.
     #[arg(global = true)]
-    file: Option<PathBuf>,
+    files: Vec<PathBuf>,
 }
 
 /// Where the meta information line may appear, as selectable on the command
@@ -89,6 +93,31 @@ enum Commands {
         /// Omit the separate title slide at the beginning of the song
         #[arg(long)]
         no_title_slide: bool,
+
+        /// Group the output into chapters, one per song. Implied when more than
+        /// one input file is given.
+        #[arg(long)]
+        chapters: bool,
+    },
+
+    /// Writes the lyrics as plain text or in a markup of your choosing
+    Text {
+        /// Output markup: plain, markdown or telegram
+        #[arg(short, long, default_value = "plain")]
+        format: TextFormat,
+
+        /// A Handlebars template to use instead of a built-in format. See the
+        /// documentation for the variables it can use.
+        #[arg(long, value_name = "TEMPLATE", conflicts_with = "format")]
+        template: Option<String>,
+
+        /// Which language to take the lyrics from (e.g. "en", "de")
+        #[arg(short, long)]
+        language: Option<String>,
+
+        /// What to put between songs when several are exported
+        #[arg(long, value_name = "TEXT")]
+        separator: Option<String>,
     },
 
     /// Generates a LilyPond (.ly) music sheet file
@@ -121,27 +150,43 @@ enum Commands {
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
 
-    let file = cli.file.ok_or_else(|| {
-        std::io::Error::new(std::io::ErrorKind::InvalidInput, "No input file was provided.")
-    })?;
+    /// Check that every input exists before doing any work.
+    fn inputs(files: &[PathBuf]) -> Result<&[PathBuf], Box<dyn std::error::Error>> {
+        if files.is_empty() {
+            return Err("no input file was provided".into());
+        }
+        for file in files {
+            if !file.is_file() {
+                return Err(format!("'{}' is not a file", file.display()).into());
+            }
+        }
+        Ok(files)
+    }
 
-    if !file.is_file() {
-        return Err(Box::new(std::io::Error::new(
-            std::io::ErrorKind::NotFound,
-            "Input file is not a file or does not exist.",
-        )));
+    /// The single input file, for the commands that take exactly one.
+    fn only(files: &[PathBuf]) -> Result<&PathBuf, Box<dyn std::error::Error>> {
+        match files {
+            [file] => Ok(file),
+            _ => Err(format!(
+                "this command takes exactly one input file, {} were given",
+                files.len()
+            )
+            .into()),
+        }
     }
 
     match &cli.command {
         Commands::Presentation {
             language,
             multi_language,
+            chapters,
             show,
             max_lines,
             meta_syntax,
             show_meta,
             no_title_slide,
         } => {
+            let files = inputs(&cli.files)?;
             let lang_config = if !show.is_empty() {
                 // --show wins: it is the most specific of the three.
                 LanguageConfiguration::Complex(
@@ -172,15 +217,43 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 ..SlideSettings::default()
             };
 
-            let slides = slides_from_file(&file, &settings)?;
-            println!("{}", serde_json::to_string_pretty(&slides)?);
+            // Several songs — or an explicit request — are grouped into
+            // chapters so that a presentation can tell them apart.
+            if files.len() > 1 || *chapters {
+                let songs: Result<Vec<_>, _> = files.iter().map(import_song_from_file).collect();
+                let chapters = chapters_from_songs(&songs?, &settings);
+                println!("{}", serde_json::to_string_pretty(&chapters)?);
+            } else {
+                let slides = slides_from_file(only(files)?, &settings)?;
+                println!("{}", serde_json::to_string_pretty(&slides)?);
+            }
+        }
+
+        Commands::Text {
+            format,
+            template,
+            language,
+            separator,
+        } => {
+            let files = inputs(&cli.files)?;
+            let settings = TextSettings {
+                format: match template {
+                    Some(template) => TextFormat::Custom(template.clone()),
+                    None => format.clone(),
+                },
+                language: language.clone(),
+                song_separator: separator.clone(),
+            };
+
+            let songs: Result<Vec<_>, _> = files.iter().map(import_song_from_file).collect();
+            println!("{}", text_from_songs(&songs?, &settings)?);
         }
 
         Commands::Lilypond {
             paper_size,
             indent,
         } => {
-            let song = import_song_from_file(&file)?;
+            let song = import_song_from_file(only(inputs(&cli.files)?)?)?;
             let settings = LilypondSettings {
                 paper_size: paper_size.clone(),
                 layout_indent: indent.clone(),
@@ -197,7 +270,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             include_chords,
             all_verses,
         } => {
-            let song = import_song_from_file(&file)?;
+            let song = import_song_from_file(only(inputs(&cli.files)?)?)?;
             let settings = AbcSettings {
                 unit_note_length: unit_note_length.clone(),
                 include_chords: *include_chords,

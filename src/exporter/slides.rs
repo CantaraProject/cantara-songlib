@@ -4,10 +4,20 @@
 
 use crate::exporter::abc::{AbcSettings, PartPhrases};
 use crate::slides::{
-    wrap_blocks, LanguageConfiguration, Slide, SlideElement, SlideRow, SlideSettings,
+    wrap_blocks, LanguageConfiguration, LinkedEntity, PresentationChapter, Slide, SlideElement,
+    SlideRow, SlideSettings,
 };
 use crate::song::{LyricLanguage, Song, SongPart};
 use crate::templating::MetaTemplate;
+
+/// Turn stored lyrics into text a human should read.
+///
+/// The song model keeps lyrics as they are sung, with LilyPond's syllable and
+/// melisma markup. Anything shown to an audience — a slide or a text export —
+/// wants that removed.
+pub fn lyrics_for_reading(text: &str) -> String {
+    strip_lilypond_markers(text)
+}
 
 /// Strip LilyPond lyric markup from lyrics text for presentation display.
 ///
@@ -274,6 +284,9 @@ struct Chunk<'song> {
     /// tell a syllable from a word. This is the text of the first requested
     /// language, which is the one the notation is written for.
     notation_lyrics: Option<String>,
+    /// Which requested element supplied [`Chunk::notation_lyrics`]. That row
+    /// repeats what the notation already shows and is flagged accordingly.
+    notation_slot: Option<usize>,
 }
 
 /// Generate [`SlideContent::Complex`] slides.
@@ -304,20 +317,30 @@ fn generate_complex_slides(
     for (index, chunk) in chunks.iter().enumerate() {
         let mut rows: Vec<SlideRow> = Vec::new();
 
+        // Whether the notation made it onto the slide decides whether the row
+        // it took its words from is a repetition.
+        let mut notation_shown = false;
+
         for (slot, element) in elements.iter().enumerate() {
             match element {
                 SlideElement::Notation => {
                     if let Some(row) = notation_row(song, chunk, &abc_settings) {
+                        notation_shown = true;
                         rows.push(row);
                     }
                 }
                 SlideElement::Lyrics(language) => {
                     if let Some(text) = &chunk.texts[slot] {
                         let position = positions[slot].unwrap_or(0);
-                        rows.push(SlideRow::lyrics(
+                        let row = SlideRow::lyrics(
                             language_label(song, chunk.part, language, position),
                             text.clone(),
-                        ));
+                        );
+                        rows.push(if notation_shown && chunk.notation_slot == Some(slot) {
+                            row.also_shown_in_notation()
+                        } else {
+                            row
+                        });
                     }
                 }
             }
@@ -391,8 +414,12 @@ fn build_chunks<'song>(
             continue;
         }
 
-        // The notation is written for the first requested language.
-        let notation_source = per_element.iter().flatten().next();
+        // The notation is written for the first requested language that the
+        // part actually has.
+        let notation_slot = per_element
+            .iter()
+            .position(|lyrics| lyrics.is_some());
+        let notation_source = notation_slot.and_then(|slot| per_element[slot].as_ref());
 
         let step = settings.max_lines.unwrap_or(line_count).max(1);
 
@@ -420,6 +447,7 @@ fn build_chunks<'song>(
                 lines: start..end,
                 texts,
                 notation_lyrics: notation_source.map(|lyrics| lyrics.raw.join("\n")),
+                notation_slot,
             });
             start = end;
         }
@@ -570,6 +598,59 @@ pub fn slides_from_song(song: &Song, settings: &SlideSettings) -> Vec<Slide> {
             generate_complex_slides(song, settings, elements)
         }
     }
+}
+
+// ---------------------------------------------------------------------------
+// Several songs
+// ---------------------------------------------------------------------------
+
+/// Build one [`PresentationChapter`] per song.
+///
+/// A chapter groups the slides of one song and keeps a link back to the song
+/// they came from, which is what lets a presentation jump between songs and
+/// show where it is.
+///
+/// ```
+/// use cantara_songlib::exporter::slides::chapters_from_songs;
+/// use cantara_songlib::importer::import_song_from_file;
+/// use cantara_songlib::slides::{LinkedEntity, SlideSettings};
+///
+/// let songs = [
+///     import_song_from_file("tests/data/Amazing Grace.song.yml")?,
+///     import_song_from_file("tests/data/Weiß ich den Weg auch nicht.ccli")?,
+/// ];
+///
+/// let chapters = chapters_from_songs(&songs, &SlideSettings::default());
+/// assert_eq!(chapters.len(), 2);
+/// assert!(!chapters[0].slides.is_empty());
+///
+/// match &chapters[0].linked_entity {
+///     LinkedEntity::Song(song) => assert_eq!(song.title, "Amazing Grace"),
+///     other => panic!("unexpected link: {:?}", other),
+/// }
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
+pub fn chapters_from_songs(songs: &[Song], settings: &SlideSettings) -> Vec<PresentationChapter> {
+    songs
+        .iter()
+        .map(|song| {
+            PresentationChapter::new(
+                slides_from_song(song, settings),
+                LinkedEntity::Song(song.clone()),
+            )
+        })
+        .collect()
+}
+
+/// The slides of several songs, one after another.
+///
+/// Use this when the consumer wants a flat run of slides;
+/// [`chapters_from_songs`] keeps the songs apart.
+pub fn slides_from_songs(songs: &[Song], settings: &SlideSettings) -> Vec<Slide> {
+    songs
+        .iter()
+        .flat_map(|song| slides_from_song(song, settings))
+        .collect()
 }
 
 #[cfg(test)]

@@ -19,6 +19,7 @@ It is part of the effort to rewrite [Cantara](https://github.com/reckel-jm/canta
 | [docs/ccli-import.md](docs/ccli-import.md) | Reading CCLI SongSelect exports in any language |
 | [docs/meta-information.md](docs/meta-information.md) | The meta information line on slides: template and placement |
 | [docs/complex-slides.md](docs/complex-slides.md) | Slides stacking notation and several languages |
+| [docs/text-export.md](docs/text-export.md) | Plain text, Markdown/Telegram markup, and exporting several songs |
 
 ## Repository layout
 
@@ -26,7 +27,7 @@ It is part of the effort to rewrite [Cantara](https://github.com/reckel-jm/canta
 src/
 ├── song.rs        the data model every importer and exporter shares
 ├── importer/      .song (classic), .song.yml, .ccli, .cssf readers
-├── exporter/      slides, LilyPond, ABC writers
+├── exporter/      slides, LilyPond, ABC, text writers
 ├── slides.rs      presentation slide types
 ├── templating.rs  the meta information template
 ├── lib.rs         library entry point and C FFI
@@ -44,4 +45,6 @@ docs/              prose documentation
 cargo run -- "tests/data/Amazing Grace.song.yml" presentation   # slides as JSON
 cargo run -- "tests/data/Amazing Grace.song.yml" lilypond       # sheet music
 cargo run -- "tests/data/Amazing Grace.song.yml" abc            # ABC notation
+cargo run -- "tests/data/Amazing Grace.song.yml" text           # plain lyrics
+cargo run -- a.song.yml b.ccli text --format markdown           # several songs
 ```

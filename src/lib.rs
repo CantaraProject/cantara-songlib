@@ -18,8 +18,8 @@ and an exporter turns that song into an output format:
 ```text
 .song     ─┐                          ┌─► slides   (JSON for the presentation)
 .song.yml  ├─► importer ─► Song ─► exporter ─► LilyPond (.ly, SVG, PDF)
-.ccli      │                          └─► ABC      (.abc)
-.cssf     ─┘
+.ccli      │                          ├─► ABC      (.abc)
+.cssf     ─┘                          └─► text     (plain, Markdown, Telegram, …)
 ```
 
 Because the model sits in the middle, every input format gains every output
@@ -38,6 +38,7 @@ orders, several voices, multiple languages and metadata.
 - Presentation slides, see [`exporter::slides`].
 - LilyPond sheet music, see [`exporter::lilypond`].
 - ABC notation, see [`exporter::abc`].
+- Plain text and templated markup, see [`exporter::text`].
 
 # Example
 
@@ -90,6 +91,7 @@ pub mod song;
 #[doc = include_str!("../docs/ccli-import.md")]
 #[doc = include_str!("../docs/meta-information.md")]
 #[doc = include_str!("../docs/complex-slides.md")]
+#[doc = include_str!("../docs/text-export.md")]
 pub struct DocumentationExamples;
 
 pub mod importer;

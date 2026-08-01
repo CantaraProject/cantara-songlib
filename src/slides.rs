@@ -317,6 +317,23 @@ pub struct ComplexSlide {
     pub line_count: usize,
 }
 
+impl ComplexSlide {
+    /// The rows with nothing shown twice: the notation plus every lyrics row
+    /// whose text is *not* already printed under the notes.
+    ///
+    /// Use this for a layout that shows the notation with its words and does
+    /// not want the first language repeated underneath; use
+    /// [`ComplexSlide::rows`] to lay out everything yourself.
+    pub fn rows_without_repetition(&self) -> impl Iterator<Item = &SlideRow> {
+        self.rows.iter().filter(|row| !row.redundant)
+    }
+
+    /// The notation row, if this slide has one.
+    pub fn notation(&self) -> Option<&SlideRow> {
+        self.rows.iter().find(|row| row.is_notation())
+    }
+}
+
 /// One row of a [`ComplexSlide`].
 #[derive(Clone, Serialize, Deserialize, PartialEq, Debug)]
 pub struct SlideRow {
@@ -325,6 +342,16 @@ pub struct SlideRow {
     /// The row's content: a complete ABC tune for a notation row, the lyrics
     /// lines joined by newlines for a lyrics row.
     pub content: String,
+    /// Whether this row's text is already printed elsewhere on the same slide.
+    ///
+    /// The notation row carries the words of the first requested language under
+    /// its notes, so the lyrics row for that language repeats them. It is still
+    /// included — a frontend may well want to show the text again in a larger
+    /// font for the congregation — but it is flagged so that a layout which
+    /// would rather not repeat it can leave it out. See
+    /// [`ComplexSlide::rows_without_repetition`].
+    #[serde(default)]
+    pub redundant: bool,
 }
 
 impl SlideRow {
@@ -333,6 +360,7 @@ impl SlideRow {
         SlideRow {
             kind: SlideRowKind::Notation { syllables },
             content: abc.into(),
+            redundant: false,
         }
     }
 
@@ -342,7 +370,22 @@ impl SlideRow {
         SlideRow {
             kind: SlideRowKind::Lyrics { language },
             content: text.into(),
+            redundant: false,
         }
+    }
+
+    /// Mark this row as repeating text that the notation already shows.
+    ///
+    /// ```
+    /// use cantara_songlib::slides::SlideRow;
+    ///
+    /// let row = SlideRow::lyrics(Some("en".to_string()), "Amazing grace");
+    /// assert!(!row.redundant);
+    /// assert!(row.also_shown_in_notation().redundant);
+    /// ```
+    pub fn also_shown_in_notation(mut self) -> SlideRow {
+        self.redundant = true;
+        self
     }
 
     /// Whether this row carries notation rather than text.

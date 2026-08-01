@@ -5,3 +5,5 @@ pub mod slides;
 pub mod lilypond;
 
 pub mod abc;
+
+pub mod text;

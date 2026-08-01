@@ -506,6 +506,108 @@ parts:
 }
 
 // ---------------------------------------------------------------------------
+// Marking repeated text
+// ---------------------------------------------------------------------------
+
+/// The lyrics row whose words are already under the notes is flagged, so a
+/// layout can decide whether to print them twice.
+#[test]
+fn test_the_row_shown_in_the_notation_is_flagged() {
+    let song = song_yml::import_from_yml_string(BILINGUAL).unwrap();
+    let elements = notation(&[
+        SlideElement::Notation,
+        SlideElement::Lyrics("en".to_string()),
+        SlideElement::Lyrics("de".to_string()),
+    ]);
+
+    let slides = slides_from_song(&song, &settings(elements, None));
+    let slide = complex_slides(&slides)[0];
+
+    let flags: Vec<bool> = slide.rows.iter().map(|row| row.redundant).collect();
+    // The notation itself is never a repetition; English is under the notes;
+    // German is not.
+    assert_eq!(flags, [false, true, false]);
+
+    // Dropping the repetition leaves the notation and the German row.
+    let kept: Vec<&_> = slide.rows_without_repetition().collect();
+    assert_eq!(kept.len(), 2);
+    assert!(kept[0].is_notation());
+    assert_eq!(
+        kept[1].kind,
+        SlideRowKind::Lyrics {
+            language: Some("de".to_string())
+        }
+    );
+}
+
+/// Asking for German first moves the flag with it.
+#[test]
+fn test_the_flag_follows_the_first_language() {
+    let song = song_yml::import_from_yml_string(BILINGUAL).unwrap();
+    let elements = notation(&[
+        SlideElement::Notation,
+        SlideElement::Lyrics("de".to_string()),
+        SlideElement::Lyrics("en".to_string()),
+    ]);
+
+    let slides = slides_from_song(&song, &settings(elements, None));
+    let slide = complex_slides(&slides)[0];
+
+    assert_eq!(
+        slide.rows.iter().map(|row| row.redundant).collect::<Vec<_>>(),
+        [false, true, false]
+    );
+    // And the German really is the text under the notes.
+    assert!(slide.notation().unwrap().content.contains("w:Oh teu-re"));
+}
+
+/// Without a notation row nothing is a repetition.
+#[test]
+fn test_nothing_is_flagged_without_notation() {
+    let song = song_yml::import_from_yml_string(BILINGUAL).unwrap();
+
+    // No notation requested at all …
+    let elements = notation(&[
+        SlideElement::Lyrics("en".to_string()),
+        SlideElement::Lyrics("de".to_string()),
+    ]);
+    let slides = slides_from_song(&song, &settings(elements, None));
+    for slide in complex_slides(&slides) {
+        assert!(slide.rows.iter().all(|row| !row.redundant));
+        assert_eq!(slide.rows_without_repetition().count(), slide.rows.len());
+    }
+
+    // … and a song with no melody cannot produce a notation row either.
+    let song = import_song_from_file("tests/data/Weiß ich den Weg auch nicht.ccli").unwrap();
+    let elements = notation(&[
+        SlideElement::Notation,
+        SlideElement::Lyrics("de".to_string()),
+    ]);
+    let slides = slides_from_song(&song, &settings(elements, None));
+    for slide in complex_slides(&slides) {
+        assert!(slide.notation().is_none());
+        assert!(slide.rows.iter().all(|row| !row.redundant));
+    }
+}
+
+/// A spoiler carries no notation, so its rows are never repetitions.
+#[test]
+fn test_spoiler_rows_are_never_flagged() {
+    let song = song_yml::import_from_yml_string(BILINGUAL).unwrap();
+    let elements = notation(&[
+        SlideElement::Notation,
+        SlideElement::Lyrics("en".to_string()),
+        SlideElement::Lyrics("de".to_string()),
+    ]);
+
+    let slides = slides_from_song(&song, &settings(elements, None));
+    let slide = complex_slides(&slides)[0];
+
+    assert_eq!(slide.spoiler.len(), 2);
+    assert!(slide.spoiler.iter().all(|row| !row.redundant));
+}
+
+// ---------------------------------------------------------------------------
 // Songs without language information
 // ---------------------------------------------------------------------------
 

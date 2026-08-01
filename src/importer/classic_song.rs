@@ -120,6 +120,12 @@ pub fn import_song(content: &str) -> Result<Song, Box<dyn Error>> {
     }
     parse_block(&block, &mut song)?;
 
+    // The classic format states no singing order, so it is guessed from the
+    // blocks: a refrain is sung after every verse. Without this the song would
+    // come out of `Song::ordered_parts` in storage order, with the refrain
+    // appearing only where it happened to be stored.
+    song.add_guessed_part_order();
+
     Ok(song)
 }
 
@@ -411,6 +417,45 @@ mod test {
         dbg!(song);
     }
     
+    /// The classic format states no order, so it has to be guessed — otherwise
+    /// `Song::ordered_parts` would hand out the blocks in storage order and the
+    /// refrain would appear only once.
+    #[test]
+    fn test_a_guessed_singing_order_is_added() {
+        let song: Song =
+            import_song_from_file("tests/data/O What A Savior That He Died For Me.song").unwrap();
+
+        assert_eq!(song.part_orders.len(), 1);
+
+        let sung: Vec<String> = song
+            .ordered_parts()
+            .iter()
+            .map(|part| part.id().to_string())
+            .collect();
+
+        // Four verses, the chorus after each of them.
+        assert_eq!(sung.len(), 8);
+        assert_eq!(
+            sung.iter().filter(|id| id.starts_with("chorus")).count(),
+            4
+        );
+        assert_eq!(sung[0], "verse.1");
+        assert_eq!(sung[1], "chorus.1");
+    }
+
+    /// A song without a refrain is simply sung through.
+    #[test]
+    fn test_order_without_a_refrain() {
+        let song: Song = import_song_from_file("tests/data/Amazing Grace.song").unwrap();
+
+        let sung: Vec<String> = song
+            .ordered_parts()
+            .iter()
+            .map(|part| part.id().to_string())
+            .collect();
+        assert_eq!(sung, ["verse.1", "verse.2", "verse.3"]);
+    }
+
     #[test]
     fn generate_slides() {
         let testfile = std::fs::read_to_string("tests/data/O What A Savior That He Died For Me.song").unwrap();
