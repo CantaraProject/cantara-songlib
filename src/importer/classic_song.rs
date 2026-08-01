@@ -688,4 +688,98 @@ mod test {
         assert_eq!(main_text_line_counts(&slides), vec![4; 8]);
     }
 
+    /// Main text paired with its secondary block, for the content slides.
+    fn main_and_secondary(slides: &[Slide]) -> Vec<(Vec<String>, Vec<String>)> {
+        slides
+            .iter()
+            .filter_map(|slide| match &slide.slide_content {
+                SlideContent::SingleLanguageMainContent(content) => {
+                    let lines = |text: String| {
+                        text.lines().map(|line| line.to_string()).collect::<Vec<_>>()
+                    };
+                    Some((
+                        lines(content.clone().main_text()),
+                        content.clone().spoiler_text().map(lines).unwrap_or_default(),
+                    ))
+                }
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// The `---` delimiter puts a second language into a secondary block, which
+    /// `wrap_blocks` wraps in parallel with the main block. Both used to carry
+    /// the leading empty line, so both lost a line off their first chunk.
+    ///
+    /// This also pins the alignment: after wrapping, each slide's translation
+    /// still has to be the translation of the main text on that same slide.
+    #[test]
+    fn test_secondary_blocks_wrap_in_step_with_the_main_block() {
+        let testfile = std::fs::read_to_string("tests/data/Bilingual Test Song.song").unwrap();
+
+        let slides = slides_from_classic_song(
+            &testfile,
+            &wrapping_settings(Some(3)),
+            "Bilingual Test Song".to_string(),
+        );
+
+        assert_eq!(
+            main_and_secondary(&slides),
+            vec![
+                (
+                    vec![
+                        "Main verse one line one".to_string(),
+                        "Main verse one line two".to_string(),
+                        "Main verse one line three".to_string(),
+                    ],
+                    vec![
+                        "Neben Strophe eins Zeile eins".to_string(),
+                        "Neben Strophe eins Zeile zwei".to_string(),
+                        "Neben Strophe eins Zeile drei".to_string(),
+                    ],
+                ),
+                (
+                    vec!["Main verse one line four".to_string()],
+                    vec!["Neben Strophe eins Zeile vier".to_string()],
+                ),
+                (
+                    vec![
+                        "Main verse two line one".to_string(),
+                        "Main verse two line two".to_string(),
+                        "Main verse two line three".to_string(),
+                    ],
+                    vec![
+                        "Neben Strophe zwei Zeile eins".to_string(),
+                        "Neben Strophe zwei Zeile zwei".to_string(),
+                        "Neben Strophe zwei Zeile drei".to_string(),
+                    ],
+                ),
+                (
+                    vec!["Main verse two line four".to_string()],
+                    vec!["Neben Strophe zwei Zeile vier".to_string()],
+                ),
+            ],
+        );
+    }
+
+    /// Unwrapped, a `---` song is one slide per stanza with the full
+    /// translation attached — the secondary block must not gain a blank line.
+    #[test]
+    fn test_secondary_block_is_not_wrapped_without_max_lines() {
+        let testfile = std::fs::read_to_string("tests/data/Bilingual Test Song.song").unwrap();
+
+        let slides = slides_from_classic_song(
+            &testfile,
+            &wrapping_settings(None),
+            "Bilingual Test Song".to_string(),
+        );
+
+        let pairs = main_and_secondary(&slides);
+        assert_eq!(pairs.len(), 2, "one slide per stanza");
+        for (main, secondary) in pairs {
+            assert_eq!(main.len(), 4);
+            assert_eq!(secondary.len(), 4);
+        }
+    }
+
 }
