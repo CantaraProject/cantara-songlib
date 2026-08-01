@@ -269,6 +269,11 @@ struct Chunk<'song> {
     /// The text of each requested element, `None` where the song has nothing.
     /// Parallel to the requested elements; the notation entry is always `None`.
     texts: Vec<Option<String>>,
+    /// The lyrics that go under the notes, as the song stores them — `--`
+    /// syllable markers intact, because those are what the notation needs to
+    /// tell a syllable from a word. This is the text of the first requested
+    /// language, which is the one the notation is written for.
+    notation_lyrics: Option<String>,
 }
 
 /// Generate [`SlideContent::Complex`] slides.
@@ -363,7 +368,7 @@ fn build_chunks<'song>(
 
     for part in song.ordered_parts() {
         // The lyrics of every requested language, as lines.
-        let per_element: Vec<Option<Vec<String>>> = elements
+        let per_element: Vec<Option<LyricsLines>> = elements
             .iter()
             .enumerate()
             .map(|(slot, element)| match element {
@@ -378,13 +383,16 @@ fn build_chunks<'song>(
         let line_count = per_element
             .iter()
             .flatten()
-            .map(|lines| lines.len())
+            .map(|lyrics| lyrics.raw.len())
             .max()
             .unwrap_or(0);
 
         if line_count == 0 {
             continue;
         }
+
+        // The notation is written for the first requested language.
+        let notation_source = per_element.iter().flatten().next();
 
         let step = settings.max_lines.unwrap_or(line_count).max(1);
 
@@ -394,9 +402,10 @@ fn build_chunks<'song>(
 
             let texts = per_element
                 .iter()
-                .map(|lines| {
-                    lines.as_ref().and_then(|lines| {
-                        let slice = &lines[start.min(lines.len())..end.min(lines.len())];
+                .map(|lyrics| {
+                    lyrics.as_ref().and_then(|lyrics| {
+                        let slice = &lyrics.display
+                            [start.min(lyrics.display.len())..end.min(lyrics.display.len())];
                         if slice.is_empty() {
                             None
                         } else {
@@ -410,6 +419,7 @@ fn build_chunks<'song>(
                 part,
                 lines: start..end,
                 texts,
+                notation_lyrics: notation_source.map(|lyrics| lyrics.raw.join("\n")),
             });
             start = end;
         }
@@ -418,7 +428,16 @@ fn build_chunks<'song>(
     chunks
 }
 
-/// The lyrics of a part in one requested language, as lines.
+/// The lyrics of a part in one requested language, in two shapes.
+struct LyricsLines {
+    /// As the song stores them, `--` syllable markers intact. The notation
+    /// needs these to place one syllable per note.
+    raw: Vec<String>,
+    /// Cleaned up for reading on a slide.
+    display: Vec<String>,
+}
+
+/// The lyrics of a part in one requested language.
 ///
 /// The **first** requested language falls back to the song's unlabelled lyrics,
 /// which is what makes a classic `.song` file — a format with no language
@@ -430,7 +449,7 @@ fn lyrics_lines(
     part: &SongPart,
     language: &str,
     position: usize,
-) -> Option<Vec<String>> {
+) -> Option<LyricsLines> {
     let content = part
         .lyrics_in(&LyricLanguage::specific(language))
         .or_else(|| {
@@ -449,17 +468,22 @@ fn lyrics_lines(
             }
         })?;
 
-    let cleaned = strip_lilypond_markers(&content.content);
-    let lines: Vec<String> = cleaned
-        .lines()
-        .map(|line| line.to_string())
-        .filter(|line| !line.trim().is_empty())
-        .collect();
+    // Both shapes are derived line by line from the same source, so they stay
+    // the same length and line *i* of one is line *i* of the other.
+    let mut raw = Vec::new();
+    let mut display = Vec::new();
+    for line in content.content.lines() {
+        if line.trim().is_empty() {
+            continue;
+        }
+        raw.push(line.trim().to_string());
+        display.push(strip_lilypond_markers(line));
+    }
 
-    if lines.is_empty() {
+    if raw.is_empty() {
         None
     } else {
-        Some(lines)
+        Some(LyricsLines { raw, display })
     }
 }
 
@@ -493,7 +517,13 @@ fn notation_row(song: &Song, chunk: &Chunk, settings: &AbcSettings) -> Option<Sl
     // The melody is split along the part's own lyrics, so a chunk that runs
     // past the last phrase is clamped rather than dropped.
     let lines = chunk.lines.start.min(phrases.len())..chunk.lines.end.min(phrases.len());
-    let abc = phrases.excerpt(lines.clone())?;
+
+    // The words of the first requested language go under the notes; without
+    // any lyrics the notation is still emitted, just bare.
+    let abc = match &chunk.notation_lyrics {
+        Some(lyrics) => phrases.excerpt_with_lyrics(lines.clone(), lyrics)?,
+        None => phrases.excerpt(lines.clone())?,
+    };
 
     Some(SlideRow::notation(abc, phrases.syllables_in(lines)))
 }

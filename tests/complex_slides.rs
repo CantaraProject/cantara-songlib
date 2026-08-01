@@ -277,10 +277,232 @@ fn test_notation_rows_are_standalone_abc_tunes() {
         assert!(abc.contains("K:F"), "missing the key:\n{}", abc);
         // A blank line would end the tune before the music started.
         assert!(!abc.trim_end().contains("\n\n"), "blank line inside:\n{}", abc);
-        // The music has to come after the header.
-        let music = abc.lines().last().unwrap();
-        assert!(music.contains('|'), "no bar lines in the music:\n{}", abc);
+
+        // Every music line has bar lines and is followed by its lyrics.
+        let music_lines: Vec<&str> = abc
+            .lines()
+            .filter(|line| !line.starts_with("w:") && !is_header(line))
+            .collect();
+        assert!(!music_lines.is_empty(), "no music at all:\n{}", abc);
+        for line in music_lines {
+            assert!(line.contains('|'), "no bar lines in '{}':\n{}", line, abc);
+        }
     }
+}
+
+/// Whether an ABC line is a header field such as `X:1` or `K:F`.
+fn is_header(line: &str) -> bool {
+    let mut chars = line.chars();
+    matches!((chars.next(), chars.next()), (Some(letter), Some(':')) if letter.is_ascii_alphabetic())
+}
+
+// ---------------------------------------------------------------------------
+// The words under the notes
+// ---------------------------------------------------------------------------
+
+/// The notation carries the lyrics of the first requested language, so the
+/// staff can be read and sung on its own.
+#[test]
+fn test_notation_carries_the_first_language() {
+    let song = song_yml::import_from_yml_string(BILINGUAL).unwrap();
+
+    let english_first = notation(&[
+        SlideElement::Notation,
+        SlideElement::Lyrics("en".to_string()),
+        SlideElement::Lyrics("de".to_string()),
+    ]);
+    let slides = slides_from_song(&song, &settings(english_first, None));
+    let abc = &complex_slides(&slides)[0].rows[0].content;
+    assert!(
+        abc.contains("w:A-ma-zing grace how sweet"),
+        "the English lyrics are missing from the notation:\n{}",
+        abc
+    );
+    assert!(!abc.contains("Gna-de"), "the German lyrics leaked in:\n{}", abc);
+
+    // Asking for German first puts German under the notes instead.
+    let german_first = notation(&[
+        SlideElement::Notation,
+        SlideElement::Lyrics("de".to_string()),
+        SlideElement::Lyrics("en".to_string()),
+    ]);
+    let slides = slides_from_song(&song, &settings(german_first, None));
+    let abc = &complex_slides(&slides)[0].rows[0].content;
+    assert!(
+        abc.contains("w:Oh teu-re Gna-de wun-der"),
+        "the German lyrics are missing from the notation:\n{}",
+        abc
+    );
+    assert!(!abc.contains("A-ma-zing"), "the English lyrics leaked in:\n{}", abc);
+}
+
+/// The notation breaks where the text breaks: one system per lyrics line, and
+/// each system is followed by its own words.
+#[test]
+fn test_notation_breaks_like_the_source_text() {
+    let song = import_song_from_file("tests/data/Amazing Grace.song.yml").unwrap();
+
+    for max_lines in [None, Some(1), Some(2)] {
+        let elements = notation(&[
+            SlideElement::Notation,
+            SlideElement::Lyrics("en".to_string()),
+        ]);
+        let slides = slides_from_song(&song, &settings(elements, max_lines));
+
+        for slide in complex_slides(&slides) {
+            let abc = &slide.rows[0].content;
+
+            let music_lines = abc
+                .lines()
+                .filter(|line| !line.starts_with("w:") && !is_header(line))
+                .count();
+            let lyrics_lines = abc.lines().filter(|line| line.starts_with("w:")).count();
+
+            assert_eq!(
+                music_lines, slide.line_count,
+                "max_lines={:?}: {} systems for {} lyrics lines:\n{}",
+                max_lines, music_lines, slide.line_count, abc
+            );
+            assert_eq!(
+                lyrics_lines, slide.line_count,
+                "max_lines={:?}: every system needs its own words:\n{}",
+                max_lines, abc
+            );
+        }
+    }
+}
+
+/// The four lines of a verse produce four systems, matching the text rows.
+#[test]
+fn test_a_four_line_verse_gives_four_systems() {
+    let song = import_song_from_file("tests/data/Amazing Grace.song.yml").unwrap();
+    let elements = notation(&[
+        SlideElement::Notation,
+        SlideElement::Lyrics("en".to_string()),
+    ]);
+
+    let slides = slides_from_song(&song, &settings(elements, None));
+    let slide = complex_slides(&slides)[0];
+
+    assert_eq!(slide.line_count, 4);
+    assert_eq!(
+        slide.rows[0].content.lines().filter(|l| l.starts_with("w:")).count(),
+        4
+    );
+    // The text row below shows the same four lines.
+    assert_eq!(lyrics_rows(slide)[0].1.lines().count(), 4);
+}
+
+/// A translation with more syllables than the melody has notes must not be cut
+/// mid-word. Every system carries its own `w:` line, so a surplus cannot push
+/// the following words out of place.
+#[test]
+fn test_a_longer_translation_is_not_mangled() {
+    // The German lines of the fixture are longer than the melody's phrases.
+    let song = song_yml::import_from_yml_string(BILINGUAL).unwrap();
+    let elements = notation(&[
+        SlideElement::Notation,
+        SlideElement::Lyrics("de".to_string()),
+    ]);
+
+    let slides = slides_from_song(&song, &settings(elements, None));
+    let abc = &complex_slides(&slides)[0].rows[0].content;
+
+    assert!(
+        abc.contains("w:Oh teu-re Gna-de wun-der"),
+        "the last syllable was cut off:\n{}",
+        abc
+    );
+    assert!(
+        abc.contains("w:bar die mich er-ret-tet hat"),
+        "the second line was cut off:\n{}",
+        abc
+    );
+}
+
+/// A shorter line is padded with ABC's skip marker so the remaining words stay
+/// under the right notes.
+#[test]
+fn test_a_shorter_line_is_padded() {
+    let yml = r#"
+version: 0.1
+title: Short Line
+score:
+  key: c major
+  time: 4/4
+parts:
+  - type: stanza
+    contents:
+    - type: voice
+      number: 1
+      content: |
+        c4 d e f | g4 a b c
+    - type: lyrics
+      number: 1
+      content: |
+        one two three four
+        five six
+"#;
+    let song = song_yml::import_from_yml_string(yml).unwrap();
+    let elements = notation(&[
+        SlideElement::Notation,
+        SlideElement::Lyrics("en".to_string()),
+    ]);
+
+    let slides = slides_from_song(&song, &settings(elements, None));
+    let abc = &complex_slides(&slides)[0].rows[0].content;
+
+    // Four notes, two words — the two spare notes get skip markers.
+    assert!(
+        abc.contains("w:five six * *"),
+        "the short line was not padded:\n{}",
+        abc
+    );
+}
+
+/// The words under the notes come from whatever text the first language slot
+/// resolved to — including the unlabelled fallback of a song that states no
+/// language.
+#[test]
+fn test_notation_carries_the_fallback_text() {
+    let yml = r#"
+version: 0.1
+title: No Language Stated
+score:
+  key: c major
+  time: 4/4
+parts:
+  - type: stanza
+    contents:
+    - type: voice
+      number: 1
+      content: |
+        c4 d e f
+    - type: lyrics
+      number: 1
+      content: |
+        one two three four
+"#;
+    let song = song_yml::import_from_yml_string(yml).unwrap();
+    // The song has no language information, so the first language slot picks
+    // up its unlabelled text — and the notation is written for that text.
+    let elements = notation(&[
+        SlideElement::Notation,
+        SlideElement::Lyrics("fr".to_string()),
+    ]);
+
+    let slides = slides_from_song(&song, &settings(elements, None));
+    let slides = complex_slides(&slides);
+    assert_eq!(slides.len(), 1);
+
+    let abc = &slides[0].rows[0].content;
+    assert!(
+        abc.contains("w:one two three four"),
+        "the fallback text is missing from the notation:\n{}",
+        abc
+    );
+    // The text row reports "no language stated" rather than claiming French.
+    assert_eq!(lyrics_rows(slides[0])[0].0, None);
 }
 
 // ---------------------------------------------------------------------------

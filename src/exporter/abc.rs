@@ -1463,25 +1463,101 @@ impl PartPhrases {
         self.segments.get(index).map_or(0, |(_, _, count)| *count)
     }
 
-    /// A standalone ABC tune covering the phrases in `lines`.
+    /// A standalone ABC tune covering the phrases in `lines`, notes only.
     ///
-    /// The result is a complete tune with its own header, so it can be handed
-    /// to an ABC renderer as-is. Accidentals are resolved against the key
-    /// signature from scratch, which is correct for an excerpt: a sharp that an
-    /// earlier bar established is written out again rather than assumed.
+    /// Each phrase becomes one music line, so the notation breaks where the
+    /// lyrics break. Use [`PartPhrases::excerpt_with_lyrics`] to write the
+    /// words under the notes as well.
     ///
     /// Returns `None` for an empty or out-of-range request.
     pub fn excerpt(&self, lines: std::ops::Range<usize>) -> Option<String> {
-        let first = self.segments.get(lines.start)?;
-        let last = self.segments.get(lines.end.checked_sub(1)?)?;
+        self.render_excerpt(lines, &[])
+    }
 
-        let mut bar = BarAccidentals::default();
-        let music = render_events(&self.events[first.0..last.1], &self.key, self.unit, &mut bar);
-        if music.trim().is_empty() {
+    /// A standalone ABC tune covering the phrases in `lines`, with `lyrics`
+    /// written underneath the notes.
+    ///
+    /// `lyrics` is the text as the song stores it, with its `--` syllable
+    /// markers intact — those are what tell a syllable from a word. Line *i* of
+    /// the text goes under phrase *i*, so the notation ends up with as many
+    /// systems as the text has lines and breaks in the same places.
+    ///
+    /// A text line with fewer syllables than its phrase has notes is padded
+    /// with ABC's `*` skip marker so the remaining words stay under the right
+    /// notes. A line with more syllables is written out in full: because every
+    /// phrase carries its own `w:` line, the surplus cannot push the next line
+    /// out of place, and cutting it would show a mangled word.
+    ///
+    /// ```
+    /// use cantara_songlib::exporter::abc::{AbcSettings, PartPhrases};
+    /// use cantara_songlib::importer::song_yml;
+    ///
+    /// let content = std::fs::read_to_string("tests/data/Amazing Grace.song.yml").unwrap();
+    /// let song = song_yml::import_from_yml_string(&content).unwrap();
+    /// let verse = song.part(&"verse.1".parse().unwrap()).unwrap();
+    /// let lyrics = verse.lyrics_for(None, None).unwrap();
+    ///
+    /// let phrases = PartPhrases::of(&song, verse, &AbcSettings::default()).unwrap();
+    /// let abc = phrases.excerpt_with_lyrics(0..2, &lyrics.content).unwrap();
+    ///
+    /// // One music line and one lyrics line per phrase.
+    /// assert_eq!(abc.matches("w:").count(), 2);
+    /// assert!(abc.contains("w:A-ma-zing grace, How sweet the sound"));
+    /// ```
+    pub fn excerpt_with_lyrics(
+        &self,
+        lines: std::ops::Range<usize>,
+        lyrics: &str,
+    ) -> Option<String> {
+        self.render_excerpt(lines, &lyrics_to_lines(lyrics))
+    }
+
+    /// Render the phrases in `lines`, one music line each, optionally followed
+    /// by the matching `w:` line.
+    fn render_excerpt(
+        &self,
+        lines: std::ops::Range<usize>,
+        lyrics: &[Vec<Syllable>],
+    ) -> Option<String> {
+        if lines.start >= lines.end || lines.end > self.segments.len() {
             return None;
         }
 
-        Some(format!("{}{}\n", self.header, music))
+        // One accidental state for the whole excerpt: an accidental carries
+        // over a line break as long as the bar has not ended.
+        let mut bar = BarAccidentals::default();
+        let mut body = String::new();
+
+        for index in lines.clone() {
+            let (start, end, slots) = self.segments[index];
+            let music = render_events(&self.events[start..end], &self.key, self.unit, &mut bar);
+            if music.trim().is_empty() {
+                continue;
+            }
+
+            body.push_str(&music);
+            body.push('\n');
+
+            if let Some(line) = lyrics.get(index) {
+                let mut syllables: Vec<Syllable> = line.clone();
+                // Pad so that the remaining words stay under the right notes.
+                while syllables.len() < slots {
+                    syllables.push(Syllable {
+                        text: "*".to_string(),
+                        joined: false,
+                    });
+                }
+                if !syllables.is_empty() {
+                    body.push_str(&format!("w:{}\n", render_syllables(&syllables)));
+                }
+            }
+        }
+
+        if body.trim().is_empty() {
+            return None;
+        }
+
+        Some(format!("{}{}", self.header, body))
     }
 
     /// How many syllables the phrases in `lines` carry in total.
