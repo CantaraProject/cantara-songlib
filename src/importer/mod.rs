@@ -115,11 +115,10 @@ pub fn import_song_from_file(file_path: impl AsRef<Path>) -> Result<Song, Box<dy
     };
 
     // Formats that carry no title fall back to the file name.
-    if song.title.trim().is_empty() {
-        if let Some(stem) = path.file_stem().and_then(OsStr::to_str) {
+    if song.title.trim().is_empty()
+        && let Some(stem) = path.file_stem().and_then(OsStr::to_str) {
             song.title = stem.to_string();
         }
-    }
 
     Ok(song)
 }

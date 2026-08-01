@@ -129,11 +129,11 @@ pub extern "C" fn create_presentation_from_file_c(
     c_max_lines: c_int
 ) -> *const c_char {
     let file_path: PathBuf = PathBuf::from(c_string_to_rust(c_file_path).unwrap());
-    let title_slide: bool = match c_title_slide as i32 {
+    let title_slide: bool = match c_title_slide {
         1 => true,
         _ => false
     };
-    let show_spoiler: bool = match c_show_spoiler as i32 {
+    let show_spoiler: bool = match c_show_spoiler {
         1 => true,
         _ => false
     };

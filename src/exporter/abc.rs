@@ -1024,11 +1024,10 @@ fn render_section(
     for (segment_index, (start, end, slots)) in segments.iter().enumerate() {
         let mut line = render_events(&section.events[*start..*end], key, unit, bar);
 
-        if segment_index == 0 {
-            if let Some(annotation) = &section.annotation {
+        if segment_index == 0
+            && let Some(annotation) = &section.annotation {
                 line = format!("\"^{}\" {}", annotation, line);
             }
-        }
 
         output.push_str(&line);
         output.push('\n');
@@ -1250,7 +1249,7 @@ fn build_sections(song: &Song, settings: &AbcSettings) -> Result<Vec<Section>, S
     let refrain_first = song
         .part_orders
         .first()
-        .map_or(false, |order| order.is_refrain_first());
+        .is_some_and(|order| order.is_refrain_first());
 
     Ok(if refrain_first {
         vec![refrain_section, stanza_section]

@@ -32,18 +32,15 @@ use crate::song::{Song, SongPart, SongPartContent, SongPartContentType, SongPart
 
 /// Font configuration for LilyPond export.
 #[derive(Clone, PartialEq, Debug)]
+#[derive(Default)]
 pub enum FontSetting {
     /// Use LilyPond's default font settings.
+    #[default]
     Default,
     /// Use a specific font family for the roman (text) font.
     Specific { family: String },
 }
 
-impl std::default::Default for FontSetting {
-    fn default() -> Self {
-        FontSetting::Default
-    }
-}
 
 /// Configuration for LilyPond export output.
 #[derive(Clone, PartialEq, Debug)]
@@ -236,7 +233,7 @@ fn voice_type_to_var_name(vt: &SongPartContentType) -> &str {
 
 /// Convert a human-readable key string (e.g. "f major") to LilyPond format (`\key f \major`).
 fn format_lilypond_key(key_str: &str) -> Option<String> {
-    let parts: Vec<&str> = key_str.trim().split_whitespace().collect();
+    let parts: Vec<&str> = key_str.split_whitespace().collect();
     if parts.len() == 2 {
         let note = parts[0].to_lowercase();
         let mode = parts[1].to_lowercase();
@@ -339,11 +336,10 @@ fn build_font_block(font: &FontSetting) -> Option<String> {
 /// Build the global content string (key, time, partial) from song tags.
 fn build_global_content(song: &Song) -> String {
     let mut global_lines: Vec<String> = Vec::new();
-    if let Some(key_str) = song.score.key.as_ref() {
-        if let Some(ly_key) = format_lilypond_key(key_str) {
+    if let Some(key_str) = song.score.key.as_ref()
+        && let Some(ly_key) = format_lilypond_key(key_str) {
             global_lines.push(ly_key);
         }
-    }
     if let Some(time_str) = song.score.time.as_ref() {
         global_lines.push(format!("\\time {}", time_str));
     }
@@ -589,7 +585,7 @@ pub fn lilypond_from_song(song: &Song, settings: &LilypondSettings) -> Result<St
     let is_refrain_first = song
         .part_orders
         .first()
-        .map_or(false, |o| o.is_refrain_first());
+        .is_some_and(|o| o.is_refrain_first());
 
     let mut voice_defs: Vec<VoiceDefinition> = Vec::new();
     let combined_voice_refs: String;
@@ -905,7 +901,7 @@ pub fn lilypond_sequential_from_song(
     let is_refrain_first = song
         .part_orders
         .first()
-        .map_or(false, |o| o.is_refrain_first());
+        .is_some_and(|o| o.is_refrain_first());
 
     let r_voice_ref = refrain_voice_ref
         .as_deref()
@@ -914,8 +910,8 @@ pub fn lilypond_sequential_from_song(
 
     let mut sections: Vec<SequentialSection> = Vec::new();
 
-    if is_refrain_first {
-        if let Some(ref r_lyrics_ref) = refrain_lyrics_ref {
+    if is_refrain_first
+        && let Some(ref r_lyrics_ref) = refrain_lyrics_ref {
             sections.push(SequentialSection {
                 label: "Refrain".to_string(),
                 voice_ref: r_voice_ref.to_string(),
@@ -923,7 +919,6 @@ pub fn lilypond_sequential_from_song(
                 midi_instrument: midi_instrument.clone(),
             });
         }
-    }
 
     for (vnum, v_lyrics_ref) in &verse_var_refs {
         sections.push(SequentialSection {
@@ -1049,7 +1044,7 @@ pub fn lilypond_parts_from_song(
     let is_refrain_first = song
         .part_orders
         .first()
-        .map_or(false, |o| o.is_refrain_first());
+        .is_some_and(|o| o.is_refrain_first());
 
     let handlebars = Handlebars::new();
     let font_block = build_font_block(&settings.font);
@@ -1081,8 +1076,8 @@ pub fn lilypond_parts_from_song(
             .map_err(|e| format!("Template rendering failed: {}", e))
     };
 
-    if is_refrain_first {
-        if let Some(ref r_lyrics) = refrain_lyrics {
+    if is_refrain_first
+        && let Some(ref r_lyrics) = refrain_lyrics {
             let ly = render_part(
                 &refrain_voice_var,
                 &refrain_voice_content,
@@ -1095,7 +1090,6 @@ pub fn lilypond_parts_from_song(
                 ly_content: ly,
             });
         }
-    }
 
     for (vnum, v_lyrics) in &verse_lyrics {
         let lyrics_var = format!("verse{}", number_to_word(*vnum));

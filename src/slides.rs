@@ -71,14 +71,8 @@ impl Slide {
             slide_content: SlideContent::SingleLanguageMainContent(
                 SingleLanguageMainContentSlide::new(
                     main_text.trim().to_string(),
-                    match spoiler_text {
-                        Some(string) => Some(string.trim().to_string()),
-                        None => None,
-                    },
-                    match meta_text {
-                        Some(string) => Some(string.trim().to_string()),
-                        None => None,
-                    },
+                    spoiler_text.map(|string| string.trim().to_string()),
+                    meta_text.map(|string| string.trim().to_string()),
                 ),
             ),
             linked_file: None,
@@ -89,10 +83,7 @@ impl Slide {
         Slide {
             slide_content: SlideContent::Title(TitleSlide {
                 title_text: title_text.trim().to_string(),
-                meta_text: match meta_text {
-                    Some(string) => Some(string.trim().to_string()),
-                    None => None,
-                },
+                meta_text: meta_text.map(|string| string.trim().to_string()),
             }),
             linked_file: None,
         }

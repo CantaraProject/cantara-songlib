@@ -555,11 +555,10 @@ fn parse_trailer(song: &mut Song, trailer: &str) {
 
     // The song number comes first and the licence number last; with only one
     // reference line present it is the song number.
-    if let Some(first) = reference_numbers.first() {
-        if !first.is_empty() {
+    if let Some(first) = reference_numbers.first()
+        && !first.is_empty() {
             song.set_tag("ccli_song_number", first);
         }
-    }
     if reference_numbers.len() > 1 {
         let last = reference_numbers.last().unwrap();
         if !last.is_empty() {
@@ -626,11 +625,10 @@ pub fn import_from_file(path: &std::path::Path) -> Result<Song, Box<dyn Error>> 
     let content = std::fs::read_to_string(path)?;
     let mut song = import_from_ccli_string(&content)?;
 
-    if song.title.trim().is_empty() {
-        if let Some(stem) = path.file_stem().and_then(|stem| stem.to_str()) {
+    if song.title.trim().is_empty()
+        && let Some(stem) = path.file_stem().and_then(|stem| stem.to_str()) {
             song.title = stem.to_string();
         }
-    }
 
     Ok(song)
 }

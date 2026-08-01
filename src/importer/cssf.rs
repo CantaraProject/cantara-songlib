@@ -54,14 +54,13 @@ pub fn import_input_string(import_string: String, _file_name: String) -> Result<
             continue;
         }
         
-        if flag_first_block && flag_first_line {
-            if line.contains(":") {
+        if flag_first_block && flag_first_line
+            && line.contains(":") {
                 flag_is_metadata_block = true;
             }
-        }
 
-        if flag_first_line && !flag_is_metadata_block { 
-            if !line.starts_with("#") {
+        if flag_first_line && !flag_is_metadata_block 
+            && !line.starts_with("#") {
                 return Err(
                     Box::new(
                         CantaraImportParsingError {
@@ -71,7 +70,6 @@ pub fn import_input_string(import_string: String, _file_name: String) -> Result<
                     )
                 );
             }
-        }
 
         if flag_first_line {
             flag_first_line = false;

@@ -548,23 +548,21 @@ impl SongPart {
         wanted: Option<&str>,
         song_default: Option<&str>,
     ) -> Option<&SongPartContent> {
-        if let Some(wanted) = wanted {
-            if let Some((_, content)) = self
+        if let Some(wanted) = wanted
+            && let Some((_, content)) = self
                 .all_lyrics()
                 .find(|(language, _)| language.matches(wanted, song_default))
             {
                 return Some(content);
             }
-        }
 
-        if let Some(default) = song_default {
-            if let Some((_, content)) = self
+        if let Some(default) = song_default
+            && let Some((_, content)) = self
                 .all_lyrics()
                 .find(|(language, _)| language.matches(default, song_default))
             {
                 return Some(content);
             }
-        }
 
         self.all_lyrics()
             .find(|(language, _)| **language == LyricLanguage::Default)
@@ -1024,22 +1022,20 @@ fn interleave_verses_and_refrain(song: &Song, refrain_first: bool) -> Vec<SongPa
 
     let mut order: Vec<SongPartId> = Vec::new();
 
-    if refrain_first {
-        if let Some(refrain) = refrain {
+    if refrain_first
+        && let Some(refrain) = refrain {
             order.push(refrain);
         }
-    }
 
     let last_verse = verses.len() - 1;
     for (index, verse) in verses.iter().enumerate() {
         order.push(*verse);
 
         // The bridge is played right before the final refrain.
-        if index == last_verse {
-            if let Some(bridge) = bridge {
+        if index == last_verse
+            && let Some(bridge) = bridge {
                 order.push(bridge);
             }
-        }
         if let Some(prechorus) = prechorus {
             order.push(prechorus);
         }

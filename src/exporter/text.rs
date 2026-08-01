@@ -29,9 +29,11 @@ use crate::templating::variables_for_song;
 
 /// The markup to wrap the lyrics in.
 #[derive(Clone, PartialEq, Eq, Debug)]
+#[derive(Default)]
 pub enum TextFormat {
     /// The lyrics and nothing else: the title, a blank line, then every part in
     /// singing order separated by blank lines.
+    #[default]
     Plain,
     /// Markdown: the title as a heading and the author in italics.
     Markdown,
@@ -42,11 +44,6 @@ pub enum TextFormat {
     Custom(String),
 }
 
-impl Default for TextFormat {
-    fn default() -> Self {
-        TextFormat::Plain
-    }
-}
 
 impl TextFormat {
     /// The Handlebars template this format renders with.
