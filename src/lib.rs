@@ -129,14 +129,8 @@ pub extern "C" fn create_presentation_from_file_c(
     c_max_lines: c_int
 ) -> *const c_char {
     let file_path: PathBuf = PathBuf::from(c_string_to_rust(c_file_path).unwrap());
-    let title_slide: bool = match c_title_slide {
-        1 => true,
-        _ => false
-    };
-    let show_spoiler: bool = match c_show_spoiler {
-        1 => true,
-        _ => false
-    };
+    let title_slide: bool = c_title_slide == 1;
+    let show_spoiler: bool = c_show_spoiler == 1;
     // A bit mask: bit 0 = first content slide, bit 1 = last, bit 2 = title
     // slide. Values 0-3 keep the meaning they had before the title slide
     // became selectable, so existing callers are unaffected.
@@ -144,10 +138,7 @@ pub extern "C" fn create_presentation_from_file_c(
     
     let meta_syntax = c_string_to_rust(c_meta_syntax).unwrap();
     
-    let empty_last_slide: bool = match c_empty_last_side {
-        1 => true,
-        _ => false
-    };
+    let empty_last_slide: bool = c_empty_last_side == 1;
     
     let max_lines: Option<usize> = match c_max_lines as usize {
         0 => None,
@@ -262,7 +253,7 @@ fn rust_string_to_c_char(rust_str: String) -> Option<*const c_char> {
 
 #[cfg(test)]
 mod tests {
-    use std::path::{Path, PathBuf};
+    use std::path::PathBuf;
 
     use crate::{create_presentation_from_file, slides::SlideSettings};
 

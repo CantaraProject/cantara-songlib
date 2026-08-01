@@ -177,9 +177,9 @@ pub fn slides_from_classic_song(
     // As this code is used twice in the code, it is outsourced into this function
     fn handle_block(metadata: &mut HashMap<String, String>, 
         meta_block_flag: &bool, 
-        backup_title: &String,
-        cur_block_string: &String, 
-        cur_secundary_block_string: &String, 
+        backup_title: &str,
+        cur_block_string: &str,
+        cur_secundary_block_string: &str,
         blocks: &mut Vec<Vec<String>>, 
         secondary_blocks: &mut Vec<Vec<String>>
         ) {
@@ -191,7 +191,7 @@ pub fn slides_from_classic_song(
                         metadata.insert(key.clone(), value.clone());
                     }); 
                     if metadata.get("title").is_none() {
-                        metadata.insert("title".to_string(), backup_title.clone());
+                        metadata.insert("title".to_string(), backup_title.to_string());
                     }
                 },
                 false => { 
@@ -213,10 +213,7 @@ pub fn slides_from_classic_song(
         if empty_line { start_block_flag = true };
         
         if start_block_flag && !line.is_empty() {
-            meta_block_flag = match line.chars().next().unwrap() {
-                '#' => true,
-                _   => false,
-            };
+            meta_block_flag = line.starts_with('#');
             start_block_flag = false;
         }
         
@@ -269,10 +266,10 @@ pub fn slides_from_classic_song(
         &mut secondary_blocks
     );
 
-    if slide_settings.max_lines.is_some() {
-        let wrapped_blocks_output: Vec<Vec<Vec<String>>> = wrap_blocks(&vec![blocks, secondary_blocks], slide_settings.max_lines.unwrap(), true);
-        blocks = wrapped_blocks_output.first().unwrap().clone();
-        secondary_blocks = wrapped_blocks_output.get(1).unwrap().clone();
+    if let Some(max_lines) = slide_settings.max_lines {
+        let wrapped = wrap_blocks(&[blocks, secondary_blocks], max_lines, true);
+        blocks = wrapped.first().cloned().unwrap_or_default();
+        secondary_blocks = wrapped.get(1).cloned().unwrap_or_default();
     }
 
     // Create the Presentation

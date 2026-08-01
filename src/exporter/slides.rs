@@ -159,7 +159,7 @@ fn generate_single_language_slides(
 
     // Apply wrapping if max_lines is set
     if let Some(max_lines) = settings.max_lines {
-        let wrapped = wrap_blocks(&vec![blocks.clone()], max_lines, true);
+        let wrapped = wrap_blocks(std::slice::from_ref(&blocks), max_lines, true);
         if let Some(first) = wrapped.first() {
             blocks = first.clone();
         }

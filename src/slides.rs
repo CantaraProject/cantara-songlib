@@ -672,44 +672,46 @@ impl ShowMetaInformation {
     }
 }
 
-/// This function wraps the blocks, so that the number of lines never exceeds maximum_lines.
-/// The second block is optional and will be wrapped accordingly to the first one.
-/// **Warning: This function will panic, if the length of a given secondary blocks are not equal to the length of the primary block**
+/// Wrap blocks so that none of them exceeds `maximum_lines` lines.
+///
+/// Several groups of blocks can be wrapped at once — the slide exporters use
+/// that to keep the lyrics of different languages in step with each other. All
+/// groups are cut at the same places, so line *i* of one group still belongs
+/// with line *i* of the next afterwards.
 ///
 /// # Arguments
-/// - `blocks`: A `&mut Vec<Vec<Vec<String>>>` with all the blocks which should be wrapped
-/// - `maximum_lines`: The number of maximum lines which a block may have
-/// - `persistence`: Whether block brakes are to be preserved (recommended is true)
-/// Panics if secondary_block is Some(s) but s.len() != primary_block.len()
+/// - `blocks`: the groups to wrap; every group has to hold the same number of
+///   blocks
+/// - `maximum_lines`: the most lines a block may have
+/// - `persistence`: whether the original block breaks are preserved
+///   (recommended)
+///
 /// # Returns
-/// The modified blocks as `Vec<Vec<Vec<String>>>`
+/// The wrapped groups.
+///
+/// # Panics
+/// If the groups do not all hold the same number of blocks.
 pub fn wrap_blocks(
-    blocks: &Vec<Vec<Vec<String>>>,
+    blocks: &[Vec<Vec<String>>],
     maximum_lines: usize,
     persistence: bool,
 ) -> Vec<Vec<Vec<String>>> {
     if blocks.is_empty() {
-        return blocks.clone();
+        return blocks.to_vec();
     }
 
     let first_block_length = blocks[0].len();
-    if blocks.len() > 1 {
-        for i in 1..blocks.len() {
-            if blocks[i].len() != first_block_length {
-                panic!("The length of every block has to be equal.")
-            }
+    for group in blocks.iter().skip(1) {
+        if group.len() != first_block_length {
+            panic!("The length of every block has to be equal.")
         }
     }
 
-    let mut wrapped_blocks = blocks.clone();
+    let mut wrapped_blocks = blocks.to_vec();
 
     let mut block_index: usize = 0;
     let mut skip_next: bool = false;
     while block_index < wrapped_blocks[0].len() {
-        #[cfg(test)]
-        {
-            eprintln!("DBG idx={}, lens={:?}", block_index, wrapped_blocks.iter().map(|b| b.len()).collect::<Vec<_>>());
-        }
         if skip_next {
             skip_next = false;
             block_index += 1;
@@ -719,21 +721,15 @@ pub fn wrap_blocks(
             // The first part takes as many lines as it is allowed to.
             let target_first_len = maximum_lines;
 
-            // Determine whether we should insert a new block placeholder after the current one
             let has_next = wrapped_blocks[0].get(block_index + 1).is_some();
-            let insert_new_block = !has_next || persistence || (!persistence && has_next);
-            if insert_new_block {
-                wrapped_blocks
-                    .iter_mut()
-                    .for_each(|block| block.insert(block_index + 1, vec![]));
-            }
 
-            // Determine destination index for moved lines
-            // - If persistence is true or there was no next, move lines into the newly created block at index+1
-            // - If persistence is false and a next block exists, move lines into the original next block which is now at index+2
-            // In non-persistent mode with an existing next block we still insert
-            // a placeholder at index+1, merge the overflow into it and append
-            // the original next block afterwards.
+            // The overflow always goes into a fresh block right after this one.
+            // In non-persistent mode the block that used to follow is then
+            // appended to it further down, which is what merges the two.
+            wrapped_blocks
+                .iter_mut()
+                .for_each(|block| block.insert(block_index + 1, vec![]));
+
             let destination_index = block_index + 1;
 
             let mut moved_line_count = 0;
