@@ -61,20 +61,37 @@ fn test_trailer_metadata_reaches_the_slides() {
     );
 }
 
-/// A CCLI export carries lyrics but no music, so the sheet-music exporters have
-/// to refuse it with a clear message instead of panicking or emitting an empty
-/// score.
+/// A CCLI export carries lyrics but no music. There is no melody to engrave,
+/// so both sheet-music exporters fall back to typesetting the text instead of
+/// refusing the song.
 #[test]
-fn test_sheet_music_export_reports_the_missing_melody() {
+fn test_sheet_music_export_typesets_the_lyrics_without_a_melody() {
     let song = import_song_from_file(GENERIC).expect("import");
+    assert!(!song.has_voice_content(), "the fixture has no melody");
 
-    let lilypond = lilypond_from_song(&song, &LilypondSettings::default());
-    assert!(lilypond.is_err());
-    assert!(lilypond.unwrap_err().contains("no voice content"));
+    let lilypond = lilypond_from_song(&song, &LilypondSettings::default()).expect("markup export");
+    assert!(
+        lilypond.contains("\\markup \\column {"),
+        "the lyrics are not typeset as markup:\n{}",
+        lilypond
+    );
+    assert!(
+        !lilypond.contains("\\score"),
+        "there is no melody, so there must be no staff:\n{}",
+        lilypond
+    );
 
-    let abc = abc_from_song(&song, &AbcSettings::default());
-    assert!(abc.is_err());
-    assert!(abc.unwrap_err().contains("no voice content"));
+    let abc = abc_from_song(&song, &AbcSettings::default()).expect("words export");
+    assert!(
+        abc.contains("W:"),
+        "the lyrics are not carried as W: fields:\n{}",
+        abc
+    );
+    assert!(
+        !abc.contains("\nw:"),
+        "there are no notes to align syllables to:\n{}",
+        abc
+    );
 }
 
 /// The singing order is derived from the section headings, so a pre-chorus ends

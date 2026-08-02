@@ -13,7 +13,7 @@ use cantara_songlib::templating::MetaTemplate;
 use cantara_songlib::slides_from_file;
 
 use clap::{Parser, Subcommand};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 #[derive(Parser)]
 #[command(version, about)]
@@ -22,8 +22,8 @@ struct Cli {
     #[command(subcommand)]
     command: Commands,
 
-    /// The song file(s) to read. The `text` and `presentation` commands accept
-    /// several; the music formats take exactly one.
+    /// The song file(s) to read. The `text`, `presentation` and `abc` commands
+    /// accept several; `lilypond` takes exactly one.
     #[arg(global = true)]
     files: Vec<PathBuf>,
 }
@@ -163,6 +163,35 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Ok(files)
     }
 
+    /// Warn about a song that carries neither notation nor lyrics.
+    ///
+    /// Such a file is empty, not broken — an export run over a whole song
+    /// folder should say so and carry on rather than abort on the first one.
+    /// Returns whether the song was empty.
+    fn warn_if_empty(song: &cantara_songlib::song::Song, file: &Path) -> bool {
+        let empty = !song.has_voice_content() && !song.has_lyrics_content();
+        if empty {
+            eprintln!(
+                "warning: '{}' has neither notation nor lyrics — nothing to export",
+                file.display()
+            );
+        }
+        empty
+    }
+
+    /// Set the `X:` reference number of an ABC tune.
+    ///
+    /// Tunes in one ABC file have to be numbered apart; the exporter always
+    /// emits `X:1` because it only ever sees a single song.
+    fn renumber_tune(abc: &str, number: usize) -> String {
+        match abc.split_once('\n') {
+            Some((first, rest)) if first.starts_with("X:") => {
+                format!("X:{}\n{}", number, rest)
+            }
+            _ => abc.to_string(),
+        }
+    }
+
     /// The single input file, for the commands that take exactly one.
     fn only(files: &[PathBuf]) -> Result<&PathBuf, Box<dyn std::error::Error>> {
         match files {
@@ -253,12 +282,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             paper_size,
             indent,
         } => {
-            let song = import_song_from_file(only(inputs(&cli.files)?)?)?;
+            let file = only(inputs(&cli.files)?)?;
+            let song = import_song_from_file(file)?;
             let settings = LilypondSettings {
                 paper_size: paper_size.clone(),
                 layout_indent: indent.clone(),
                 ..LilypondSettings::default()
             };
+            // A song with neither notation nor lyrics is nothing to engrave,
+            // but it is not a broken input either.
+            if warn_if_empty(&song, file) {
+                return Ok(());
+            }
             match exporter::lilypond::lilypond_from_song(&song, &settings) {
                 Ok(ly_output) => println!("{}", ly_output),
                 Err(e) => return Err(e.into()),
@@ -270,15 +305,26 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             include_chords,
             all_verses,
         } => {
-            let song = import_song_from_file(only(inputs(&cli.files)?)?)?;
+            let files = inputs(&cli.files)?;
             let settings = AbcSettings {
                 unit_note_length: unit_note_length.clone(),
                 include_chords: *include_chords,
                 include_all_verses: *all_verses,
             };
-            match exporter::abc::abc_from_song(&song, &settings) {
-                Ok(abc_output) => println!("{}", abc_output),
-                Err(e) => return Err(e.into()),
+
+            // An ABC file holds a sequence of tunes, so several songs simply
+            // follow one another — each with its own X: number.
+            let mut tune_number = 0usize;
+            for file in files {
+                let song = import_song_from_file(file)?;
+                if warn_if_empty(&song, file) {
+                    continue;
+                }
+                let abc_output = exporter::abc::abc_from_song(&song, &settings)?;
+                tune_number += 1;
+                // The trailing newline of `println!` doubles as the blank line
+                // the ABC standard wants between two tunes.
+                println!("{}", renumber_tune(&abc_output, tune_number));
             }
         }
     }

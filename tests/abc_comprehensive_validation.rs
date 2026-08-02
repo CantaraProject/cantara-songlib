@@ -228,6 +228,12 @@ fn count_syllables(line: &str) -> usize {
     let body = line.trim_start_matches("w:");
     let mut count = 0usize;
     for word in body.split_whitespace() {
+        // A melisma marker holds the previous syllable over a further note. It
+        // is not sung on its own, and the note it covers is not counted as
+        // singable either, so it must stay out of this count.
+        if word == "_" {
+            continue;
+        }
         // Unescaped hyphens split a word into further syllables.
         let mut chars = word.chars().peekable();
         let mut current = String::new();
@@ -381,6 +387,12 @@ fn test_bars_match_the_meter() {
 
 /// Each `w:` line has to carry exactly as many syllables as its music line has
 /// singable notes, otherwise the text drifts away from the melody.
+///
+/// `singable` counts slurs and ties as melismata, which is what the music says
+/// on its own. A verse that switches melismata off — `\set ignoreMelismata` or
+/// the `[…]` shorthand — legitimately carries *more* syllables than that, so a
+/// fixture using the feature would trip this check. Model the ignore regions
+/// here before adding one, rather than loosening the bound.
 #[test]
 fn test_lyrics_align_with_notes() {
     for path in TEST_FILES {
@@ -476,7 +488,8 @@ fn test_refrain_is_exported() {
         abc
     );
     assert!(
-        abc.contains("Denn wer sich rüh-men will,"),
+        // "Denn" is held across the slurred `fis8( g )`.
+        abc.contains("Denn _ wer sich rüh-men will,"),
         "the refrain lyrics are missing:\n{}",
         abc
     );
