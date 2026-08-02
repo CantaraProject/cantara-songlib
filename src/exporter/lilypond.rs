@@ -543,8 +543,68 @@ global = {
 /// \addlyrics { \chorusSkip \verseTwo }
 /// ```
 ///
-/// Returns an error if the song has no voice content to export.
+/// Typeset a song that carries no notation as text.
+///
+/// There is no music to engrave, so the lyrics become a `\markup` block: one
+/// `\column` per verse, headed by its label, with a blank line between them.
+/// The result is a complete, compilable `.ly` file just like the score export.
+fn lilypond_lyrics_only(song: &Song, settings: &LilypondSettings) -> String {
+    let mut output = String::from("\\version \"2.24.0\"\n\n\\header {\n");
+    output.push_str(&format!(
+        "  title = \"{}\"\n",
+        escape_lilypond_string(&song.title)
+    ));
+    if let Some(author) = song.tag("author") {
+        output.push_str(&format!(
+            "  composer = \"{}\"\n",
+            escape_lilypond_string(author)
+        ));
+    }
+    output.push_str("  tagline = ##f\n}\n\n");
+
+    output.push_str(&format!(
+        "\\paper {{\n  #(set-paper-size \"{}\")\n}}\n\n",
+        settings.paper_size
+    ));
+
+    output.push_str("\\markup \\column {\n");
+    for (index, block) in crate::exporter::readable_lyrics_blocks(song)
+        .iter()
+        .enumerate()
+    {
+        if index > 0 {
+            output.push_str("  \\vspace #1\n");
+        }
+        output.push_str(&format!(
+            "  \\line {{ \\bold \"{}\" }}\n",
+            escape_lilypond_string(&block.label)
+        ));
+        for line in &block.lines {
+            output.push_str(&format!(
+                "  \\line {{ \"{}\" }}\n",
+                escape_lilypond_string(line)
+            ));
+        }
+    }
+    output.push_str("}\n");
+
+    output
+}
+
+/// A song without any notation is typeset as text through `\markup` — see
+/// `lilypond_lyrics_only`.
+///
+/// Returns an error only if the song has neither notation nor lyrics.
 pub fn lilypond_from_song(song: &Song, settings: &LilypondSettings) -> Result<String, String> {
+    if !song.has_voice_content() {
+        if !song.has_lyrics_content() {
+            return Err(
+                "Song has neither voice nor lyrics content for LilyPond export".to_string(),
+            );
+        }
+        return Ok(lilypond_lyrics_only(song, settings));
+    }
+
     let parts = song.parts();
 
     // --- Step 1: Find the stanza (verse) voice ---
@@ -2315,5 +2375,56 @@ parts:
         for part in &rendered {
             assert!(!part.svg.is_empty(), "SVG for {} should not be empty", part.label);
         }
+    }
+
+    // --- Lyrics-only songs ----------------------------------------------
+
+    /// Build a song whose only content is one verse of lyrics.
+    fn lyrics_only_song(title: &str, lyrics: &str) -> Song {
+        let mut song = Song::new(title);
+        let id = song.add_part_of_type(SongPartType::Verse, Some(1));
+        let part = song.part_mut(&id).unwrap();
+        part.add_content(SongPartContent {
+            content_type: SongPartContentType::Lyrics {
+                language: crate::song::LyricLanguage::Default,
+            },
+            content: lyrics.to_string(),
+        });
+        song
+    }
+
+    /// Nothing to engrave, but the text is still worth typesetting: the lyrics
+    /// become a `\markup` block instead of a staff.
+    #[test]
+    fn test_song_without_voice_is_typeset_as_markup() {
+        let song = lyrics_only_song("No Voice", "First line\nSecond line");
+        let ly = lilypond_from_song(&song, &LilypondSettings::default()).unwrap();
+
+        assert!(ly.contains("\\version \"2.24.0\""), "{}", ly);
+        assert!(ly.contains("title = \"No Voice\""), "{}", ly);
+        assert!(ly.contains("\\markup \\column {"), "{}", ly);
+        assert!(ly.contains("\\line { \"First line\" }"), "{}", ly);
+        assert!(ly.contains("\\line { \"Second line\" }"), "{}", ly);
+        // There is no music, so no staff is set up.
+        assert!(!ly.contains("\\score"), "{}", ly);
+    }
+
+    /// Quotes and backslashes in the text must not break out of the literal.
+    #[test]
+    fn test_markup_escapes_quotes_in_the_lyrics() {
+        let song = lyrics_only_song("Quoting", "He said \"go\"");
+        let ly = lilypond_from_song(&song, &LilypondSettings::default()).unwrap();
+
+        assert!(ly.contains(r#"\line { "He said \"go\"" }"#), "{}", ly);
+    }
+
+    #[test]
+    fn test_song_without_voice_and_lyrics_is_an_error() {
+        let mut song = Song::new("Empty");
+        song.add_part_of_type(SongPartType::Verse, Some(1));
+
+        let result = lilypond_from_song(&song, &LilypondSettings::default());
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("neither voice nor lyrics"));
     }
 }

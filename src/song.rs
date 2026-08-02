@@ -673,6 +673,21 @@ impl Song {
         &self.parts
     }
 
+    /// Whether any part carries notation, following repetition references.
+    ///
+    /// The notation exporters use this to tell a song they can engrave from a
+    /// lyrics-only one, which they typeset as plain text instead.
+    pub fn has_voice_content(&self) -> bool {
+        self.parts
+            .iter()
+            .any(|part| self.voice_for_part(part).is_some())
+    }
+
+    /// Whether any part carries lyrics.
+    pub fn has_lyrics_content(&self) -> bool {
+        self.parts.iter().any(|part| part.has_lyrics())
+    }
+
     /// Mutable access to every part.
     pub fn parts_mut(&mut self) -> &mut [SongPart] {
         &mut self.parts

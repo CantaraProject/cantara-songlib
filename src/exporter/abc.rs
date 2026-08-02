@@ -908,6 +908,82 @@ fn lyrics_to_lines(content: &str) -> Vec<Vec<Syllable>> {
         .collect()
 }
 
+/// Render the body of a `w:` line against the notes it is sung on.
+///
+/// ABC binds the tokens of a `w:` line to notes one by one, so a note that
+/// continues a tie or sits inside a slur needs an explicit `_` melisma marker.
+/// Without it every syllable behind the melisma slides one note to the left —
+/// `(F G)` under "Denn wer" would put "wer" on the second note of the slur
+/// instead of holding "Denn" across both.
+///
+/// `flags` are the slot flags of `events` and must be sliced in step with it.
+///
+/// Returns the rendered body together with the number of syllables it used, so
+/// that a caller which must not lose surplus text can append the remainder.
+fn render_syllables_over_notes(
+    events: &[MusicEvent],
+    flags: &[bool],
+    syllables: &[Syllable],
+) -> (String, usize) {
+    let mut result = String::new();
+    let mut cursor = 0usize;
+    let mut tokens = 0usize;
+    // Whether the hyphen joining the next syllable to the current word has
+    // already been written. A melisma inside a word has to be spelled
+    // `al- _ rea-dy`: the hyphen belongs to the syllable the melisma extends,
+    // not to the one that resumes after it.
+    let mut hyphen_written = false;
+
+    for (index, event) in events.iter().enumerate() {
+        if !event.is_note() {
+            continue;
+        }
+
+        if flags[index] {
+            // Once the text has run out the remaining notes stay bare rather
+            // than getting melisma markers for a syllable that is not there.
+            let Some(syllable) = syllables.get(cursor) else {
+                break;
+            };
+            if tokens > 0 {
+                result.push(if syllable.joined && !hyphen_written {
+                    '-'
+                } else {
+                    ' '
+                });
+            }
+            result.push_str(&syllable.text);
+            hyphen_written = false;
+            cursor += 1;
+        } else {
+            // The note belongs to the syllable written last. If the word
+            // continues after the melisma, close it with its hyphen first.
+            if !hyphen_written && syllables.get(cursor).is_some_and(|s| s.joined) {
+                result.push('-');
+                hyphen_written = true;
+            }
+            if tokens > 0 {
+                result.push(' ');
+            }
+            result.push('_');
+        }
+
+        tokens += 1;
+    }
+
+    (result, cursor)
+}
+
+/// Append syllables that found no note behind an already rendered `w:` body.
+fn append_surplus_syllables(body: &mut String, syllables: &[Syllable]) {
+    for syllable in syllables {
+        if !body.is_empty() {
+            body.push(if syllable.joined { '-' } else { ' ' });
+        }
+        body.push_str(&syllable.text);
+    }
+}
+
 /// Render a list of syllables as the body of an ABC `w:` line.
 fn render_syllables(syllables: &[Syllable]) -> String {
     let mut result = String::new();
@@ -1004,6 +1080,9 @@ fn render_section(
         .unwrap_or(&[]);
 
     let segments = segment_events(&section.events, reference);
+    // Computed over the whole section so that slur and tie state is not lost
+    // at a segment boundary; sliced per segment below.
+    let flags = slot_flags(&section.events);
 
     // Flatten every verse into a single syllable stream so that verses with a
     // different line layout still line up with the music.
@@ -1068,7 +1147,14 @@ fn render_section(
                 String::new()
             };
 
-            output.push_str(&format!("w:{}{}\n", prefix, render_syllables(&chunk)));
+            // The chunk is already capped at the line's slot count, so nothing
+            // is left over here.
+            let (body, _) = render_syllables_over_notes(
+                &section.events[*start..*end],
+                &flags[*start..*end],
+                &chunk,
+            );
+            output.push_str(&format!("w:{}{}\n", prefix, body));
         }
     }
 
@@ -1138,6 +1224,41 @@ fn build_header(song: &Song, settings: &AbcSettings) -> String {
     header.push_str("V:1\n");
 
     header
+}
+
+/// Build a text-only tune for a song that carries no notation.
+///
+/// There is no staff to hang syllables on, so the lyrics go into `W:` fields —
+/// the ABC standard's "words printed after the tune" — instead of the `w:`
+/// lines that align text to notes. `K:none` closes the header without claiming
+/// a key the song does not have.
+fn abc_lyrics_only(song: &Song) -> String {
+    let mut output = String::from("X:1\n");
+    output.push_str(&format!("T:{}\n", song.title));
+    if let Some(author) = song.tag("author") {
+        output.push_str(&format!("C:{}\n", author));
+    }
+    output.push_str("K:none\n");
+
+    for (index, block) in crate::exporter::readable_lyrics_blocks(song)
+        .iter()
+        .enumerate()
+    {
+        if index > 0 {
+            // An empty W: field is the standard's blank line between verses.
+            output.push_str("W:\n");
+        }
+        for (line_number, line) in block.lines.iter().enumerate() {
+            let prefix = if line_number == 0 {
+                format!("{} ", block.label)
+            } else {
+                String::new()
+            };
+            output.push_str(&format!("W:{}{}\n", prefix, line));
+        }
+    }
+
+    output
 }
 
 /// Collect the stanza and refrain sections of a song in singing order.
@@ -1501,7 +1622,7 @@ impl PartPhrases {
     ///
     /// // One music line and one lyrics line per phrase.
     /// assert_eq!(abc.matches("w:").count(), 2);
-    /// assert!(abc.contains("w:A-ma-zing grace, How sweet the sound"));
+    /// assert!(abc.contains("w:A-ma-zing _ grace, How sweet the sound"));
     /// ```
     pub fn excerpt_with_lyrics(
         &self,
@@ -1526,6 +1647,7 @@ impl PartPhrases {
         // over a line break as long as the bar has not ended.
         let mut bar = BarAccidentals::default();
         let mut body = String::new();
+        let flags = slot_flags(&self.events);
 
         for index in lines.clone() {
             let (start, end, slots) = self.segments[index];
@@ -1547,7 +1669,17 @@ impl PartPhrases {
                     });
                 }
                 if !syllables.is_empty() {
-                    body.push_str(&format!("w:{}\n", render_syllables(&syllables)));
+                    let (mut line, used) = render_syllables_over_notes(
+                        &self.events[start..end],
+                        &flags[start..end],
+                        &syllables,
+                    );
+                    // A phrase with more syllables than notes is written out in
+                    // full — every phrase has its own `w:` line, so the surplus
+                    // cannot displace anything, and cutting it would show a
+                    // mangled word.
+                    append_surplus_syllables(&mut line, &syllables[used..]);
+                    body.push_str(&format!("w:{}\n", line));
                 }
             }
         }
@@ -1598,8 +1730,18 @@ fn build_excerpt_header(song: &Song, settings: &AbcSettings) -> String {
 /// per verse aligned to the notes. If the refrain has its own melody it is
 /// emitted as a separate, labelled section.
 ///
-/// Returns an error if the song contains no voice content.
+/// A song without any notation is exported as a text-only tune whose lyrics sit
+/// in `W:` fields — see [`abc_lyrics_only`].
+///
+/// Returns an error only if the song has neither notation nor lyrics.
 pub fn abc_from_song(song: &Song, settings: &AbcSettings) -> Result<String, String> {
+    if !song.has_voice_content() {
+        if !song.has_lyrics_content() {
+            return Err("Song has neither voice nor lyrics content for ABC export".to_string());
+        }
+        return Ok(abc_lyrics_only(song));
+    }
+
     let mut output = build_header(song, settings);
 
     let unit = parse_unit_note_length(&settings.unit_note_length);
@@ -1654,13 +1796,17 @@ pub fn abc_from_song_separated(song: &Song, settings: &AbcSettings) -> Result<St
         output.push_str(&line);
         output.push('\n');
 
+        let flags = slot_flags(&section.events);
         for (label, lines) in &section.lyrics {
             let syllables: Vec<Syllable> = lines.iter().flatten().cloned().collect();
             if syllables.is_empty() {
                 continue;
             }
             let prefix = label.clone().map(|l| format!("{}~", l)).unwrap_or_default();
-            output.push_str(&format!("w:{}{}\n", prefix, render_syllables(&syllables)));
+            let (mut body, used) =
+                render_syllables_over_notes(&section.events, &flags, &syllables);
+            append_surplus_syllables(&mut body, &syllables[used..]);
+            output.push_str(&format!("w:{}{}\n", prefix, body));
         }
     }
 
@@ -1968,6 +2114,61 @@ mod tests {
         assert_eq!(flags.iter().filter(|f| **f).count(), 3);
     }
 
+    /// Render `syllables` over `voice` the way a `w:` line is built.
+    fn w_line(voice: &str, syllables: &str) -> String {
+        let events = parse_voice(voice);
+        let flags = slot_flags(&events);
+        render_syllables_over_notes(&events, &flags, &lyrics_line_to_syllables(syllables)).0
+    }
+
+    /// ABC binds one `w:` token per note, so every note a slur or a tie
+    /// swallows needs a `_`. Without it the text slides off the melody from the
+    /// melisma onwards.
+    #[test]
+    fn test_melisma_holds_its_syllable_over_every_slurred_note() {
+        // The refrain of "Sei nicht stolz": "Denn" spans the slurred fis–g.
+        assert_eq!(
+            w_line("fis8( g ) | a8 a a a d,4.", "Denn wer sich rüh -- men will,"),
+            "Denn _ wer sich rüh-men will,"
+        );
+    }
+
+    #[test]
+    fn test_melisma_marks_tied_notes_too() {
+        assert_eq!(w_line("c4 d4~ d4 e4", "one two three"), "one two _ three");
+    }
+
+    #[test]
+    fn test_several_melismas_in_one_line() {
+        assert_eq!(
+            w_line("d8( e ) | f f g f8( e )", "denn er ist uns nicht"),
+            "denn _ er ist uns nicht _"
+        );
+    }
+
+    /// A melisma inside a word keeps the hyphen on the syllable it extends —
+    /// `al- _ rea-dy`, never `al _-rea-dy`.
+    #[test]
+    fn test_melisma_inside_a_word_keeps_the_hyphen_with_its_syllable() {
+        // Slur on the first syllable of the word …
+        assert_eq!(w_line("c4( d ) e4 f4", "al -- rea -- dy"), "al- _ rea-dy");
+        // … and on the second: the hyphen always closes the syllable the
+        // melisma extends, so the word never breaks across the marker.
+        assert_eq!(w_line("c4 d4( e ) f4", "al -- rea -- dy"), "al-rea- _ dy");
+    }
+
+    /// A note without text left stays bare instead of collecting stray markers.
+    #[test]
+    fn test_melisma_marker_stops_when_the_text_runs_out() {
+        assert_eq!(w_line("c4 d4 e4 f4", "one two"), "one two");
+    }
+
+    /// Rests carry no lyrics token at all.
+    #[test]
+    fn test_rests_do_not_take_a_syllable_or_a_melisma_marker() {
+        assert_eq!(w_line("c4 r4 d8( e )", "one two"), "one two _");
+    }
+
     // --- Bar lines and rests --------------------------------------------
 
     #[test]
@@ -2034,7 +2235,8 @@ mod tests {
 
         // Three verses × four lyric lines each.
         assert_eq!(abc.matches("w:").count(), 12);
-        assert!(abc.contains("w:1.~A-ma-zing grace,"));
+        // "zing" is held across the slurred `a8( f)`, so a melisma marker follows.
+        assert!(abc.contains("w:1.~A-ma-zing _ grace,"));
         assert!(abc.contains("w:2.~"));
         assert!(abc.contains("w:3.~"));
     }
@@ -2100,7 +2302,7 @@ mod tests {
 
         assert!(abc.contains("\"^Refrain\""), "refrain section missing:\n{}", abc);
         assert!(
-            abc.contains("Denn wer sich rüh-men will,"),
+            abc.contains("Denn _ wer sich rüh-men will,"),
             "refrain lyrics missing:\n{}",
             abc
         );
@@ -2188,23 +2390,54 @@ parts:
 
     // --- Errors and misc ------------------------------------------------
 
-    #[test]
-    fn test_abc_export_no_voice_error() {
-        let mut song = Song::new("Test No Voice");
+    /// Build a song whose only content is one verse of lyrics.
+    fn lyrics_only_song(title: &str, lyrics: &str) -> Song {
+        let mut song = Song::new(title);
         let id = song.add_part_of_type(SongPartType::Verse, Some(1));
-        {
-            let part = song.part_mut(&id).unwrap();
-            part.add_content(SongPartContent {
-                content_type: SongPartContentType::Lyrics {
-                    language: LyricLanguage::Default,
-                },
-                content: "Test lyrics".to_string(),
-            });
-        }
+        let part = song.part_mut(&id).unwrap();
+        part.add_content(SongPartContent {
+            content_type: SongPartContentType::Lyrics {
+                language: LyricLanguage::Default,
+            },
+            content: lyrics.to_string(),
+        });
+        song
+    }
+
+    /// Without notation there is no staff to align syllables to, so the text
+    /// goes into `W:` fields instead of `w:` lines.
+    #[test]
+    fn test_song_without_voice_exports_its_lyrics_as_words() {
+        let song = lyrics_only_song("Test No Voice", "Test lyrics\nSecond line");
+        let abc = abc_from_song(&song, &AbcSettings::default()).unwrap();
+
+        assert!(abc.contains("T:Test No Voice"), "{}", abc);
+        assert!(abc.contains("W:1. Test lyrics"), "{}", abc);
+        assert!(abc.contains("W:Second line"), "{}", abc);
+        // No staff means no note-aligned lyrics line and no voice.
+        assert!(!abc.contains("\nw:"), "{}", abc);
+        assert!(!abc.contains("V:1"), "{}", abc);
+    }
+
+    /// The syllable markup is for singing, not for reading.
+    #[test]
+    fn test_lyrics_only_export_strips_the_syllable_markup() {
+        let song = lyrics_only_song("Markup", "A -- ma -- zing grace _");
+        let abc = abc_from_song(&song, &AbcSettings::default()).unwrap();
+
+        assert!(abc.contains("W:1. Amazing grace"), "{}", abc);
+    }
+
+    /// A song with nothing in it at all is still an error — the caller decides
+    /// whether that deserves a warning or a failure.
+    #[test]
+    fn test_song_without_voice_and_lyrics_is_an_error() {
+        let mut song = Song::new("Empty");
+        song.add_part_of_type(SongPartType::Verse, Some(1));
 
         let result = abc_from_song(&song, &AbcSettings::default());
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("no voice content"));
+        assert!(result.unwrap_err().contains("neither voice nor lyrics"));
     }
 
     #[test]

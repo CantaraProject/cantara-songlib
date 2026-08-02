@@ -228,6 +228,12 @@ fn count_syllables(line: &str) -> usize {
     let body = line.trim_start_matches("w:");
     let mut count = 0usize;
     for word in body.split_whitespace() {
+        // A melisma marker holds the previous syllable over a further note. It
+        // is not sung on its own, and the note it covers is not counted as
+        // singable either, so it must stay out of this count.
+        if word == "_" {
+            continue;
+        }
         // Unescaped hyphens split a word into further syllables.
         let mut chars = word.chars().peekable();
         let mut current = String::new();
@@ -476,7 +482,8 @@ fn test_refrain_is_exported() {
         abc
     );
     assert!(
-        abc.contains("Denn wer sich rüh-men will,"),
+        // "Denn" is held across the slurred `fis8( g )`.
+        abc.contains("Denn _ wer sich rüh-men will,"),
         "the refrain lyrics are missing:\n{}",
         abc
     );
