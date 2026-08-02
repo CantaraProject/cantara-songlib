@@ -830,6 +830,40 @@ struct Syllable {
     text: String,
     /// The syllable continues the previous word and is joined with a hyphen.
     joined: bool,
+    /// The syllable sits in a region where melismata are ignored, so it takes a
+    /// note of its own even where the music slurs or ties.
+    ignore_melismata: bool,
+}
+
+impl Syllable {
+    /// A plain syllable outside any `ignoreMelismata` region.
+    fn plain(text: impl Into<String>, joined: bool) -> Self {
+        Syllable {
+            text: text.into(),
+            joined,
+            ignore_melismata: false,
+        }
+    }
+}
+
+/// Whether melismata are currently ignored while a lyrics block is parsed.
+///
+/// The state outlives a single line: LilyPond's `\set ignoreMelismata = ##t`
+/// holds until the matching `\unset`, and the bracket form may wrap several
+/// lines just as well.
+#[derive(Clone, Copy, Default, Debug)]
+struct IgnoreMelismata {
+    /// Turned on by `\set ignoreMelismata = ##t`.
+    set: bool,
+    /// Open `[` brackets; they nest so that a stray one cannot swallow the
+    /// rest of the song.
+    brackets: usize,
+}
+
+impl IgnoreMelismata {
+    fn active(&self) -> bool {
+        self.set || self.brackets > 0
+    }
 }
 
 /// Escape the characters ABC treats as control characters inside a `w:` line.
@@ -849,21 +883,39 @@ fn escape_lyric_text(text: &str) -> String {
 
 /// Split a LilyPond lyrics line into syllables.
 ///
-/// `--` (as its own token or inside a word) marks a syllable break, `_` is a
-/// melisma extender and is passed through, and inline commands such as
-/// `\set ignoreMelismata = ##t` are removed together with their arguments.
-fn lyrics_line_to_syllables(line: &str) -> Vec<Syllable> {
+/// `--` (as its own token or inside a word) marks a syllable break and `_` is a
+/// melisma extender that is passed through.
+///
+/// Two forms switch melismata off, so that the text is spread over every note
+/// even where the music slurs or ties — useful when one stanza needs a syllable
+/// on each of the notes another stanza sings as a melisma:
+///
+/// * LilyPond's `\set ignoreMelismata = ##t` … `\unset ignoreMelismata`
+/// * a `[…]` bracket around the affected words
+///
+/// Both may span several lines of the same lyrics block, which is why the state
+/// is threaded in and out rather than reset per line. Any other inline command
+/// is dropped together with its arguments.
+fn lyrics_line_to_syllables_with(line: &str, state: &mut IgnoreMelismata) -> Vec<Syllable> {
     let mut syllables: Vec<Syllable> = Vec::new();
     let mut join_next = false;
     let mut words = line.split_whitespace().peekable();
 
     while let Some(word) = words.next() {
         if word.starts_with('\\') {
-            // Drop the command, its target and an optional `= value`.
-            words.next();
+            // `\set ignoreMelismata = ##t` and `\unset ignoreMelismata` carry
+            // meaning; every other command is dropped with its arguments.
+            let target = words.next();
+            let is_ignore_melismata = target == Some("ignoreMelismata");
             if words.peek() == Some(&"=") {
                 words.next();
-                words.next();
+                let value = words.next();
+                if is_ignore_melismata {
+                    // `##f` turns the setting back off just like `\unset`.
+                    state.set = value != Some("##f");
+                }
+            } else if is_ignore_melismata && word == "\\unset" {
+                state.set = false;
             }
             continue;
         }
@@ -873,37 +925,55 @@ fn lyrics_line_to_syllables(line: &str) -> Vec<Syllable> {
             continue;
         }
 
+        // Brackets may stand alone or hug the words they enclose.
+        let opened = word.chars().take_while(|c| *c == '[').count();
+        state.brackets += opened;
+        let word = &word[opened..];
+        let closing = word.chars().rev().take_while(|c| *c == ']').count();
+        let word = &word[..word.len() - closing];
+
         if word == "_" {
             syllables.push(Syllable {
                 text: "_".to_string(),
                 joined: false,
+                ignore_melismata: state.active(),
             });
-            continue;
-        }
-
-        // A word may carry the syllable separator without spaces ("hei--lig").
-        for (index, chunk) in word.split("--").enumerate() {
-            if chunk.is_empty() {
-                continue;
+        } else {
+            // A word may carry the syllable separator without spaces
+            // ("hei--lig").
+            for (index, chunk) in word.split("--").enumerate() {
+                if chunk.is_empty() {
+                    continue;
+                }
+                syllables.push(Syllable {
+                    text: escape_lyric_text(chunk),
+                    joined: join_next || index > 0,
+                    ignore_melismata: state.active(),
+                });
+                join_next = false;
             }
-            syllables.push(Syllable {
-                text: escape_lyric_text(chunk),
-                joined: join_next || index > 0,
-            });
             join_next = false;
         }
-        join_next = false;
+
+        state.brackets = state.brackets.saturating_sub(closing);
     }
 
     syllables
 }
 
+/// Split a lyrics line on its own, starting outside any ignore region.
+#[cfg(test)]
+fn lyrics_line_to_syllables(line: &str) -> Vec<Syllable> {
+    lyrics_line_to_syllables_with(line, &mut IgnoreMelismata::default())
+}
+
 /// Split a whole lyrics block into one syllable list per line, dropping lines
 /// which contain no singable text.
 fn lyrics_to_lines(content: &str) -> Vec<Vec<Syllable>> {
+    let mut state = IgnoreMelismata::default();
     content
         .lines()
-        .map(lyrics_line_to_syllables)
+        .map(|line| lyrics_line_to_syllables_with(line, &mut state))
         .filter(|line| !line.is_empty())
         .collect()
 }
@@ -916,6 +986,61 @@ fn lyrics_to_lines(content: &str) -> Vec<Vec<Syllable>> {
 /// `(F G)` under "Denn wer" would put "wer" on the second note of the slur
 /// instead of holding "Denn" across both.
 ///
+/// Whether a note takes the next syllable instead of holding the previous one.
+///
+/// A slur or a tie makes a note a melisma — unless the syllable waiting to be
+/// sung sits in an `ignoreMelismata` region, which spreads the text over every
+/// note regardless of what the music does.
+fn note_takes_syllable(is_slot: bool, pending: Option<&Syllable>) -> bool {
+    is_slot || pending.is_some_and(|syllable| syllable.ignore_melismata)
+}
+
+/// How many syllable slots a stretch of music offers to `syllables`.
+///
+/// Notes past the end of the text are counted by the music alone, so a line
+/// with little text still reports the full capacity a caller needs to pad it
+/// out to.
+fn slot_capacity(events: &[MusicEvent], flags: &[bool], syllables: &[Syllable]) -> usize {
+    let mut cursor = 0usize;
+    let mut slots = 0usize;
+
+    for (index, event) in events.iter().enumerate() {
+        if !event.is_note() {
+            continue;
+        }
+        if note_takes_syllable(flags[index], syllables.get(cursor)) {
+            slots += 1;
+            cursor = (cursor + 1).min(syllables.len());
+        }
+    }
+
+    slots
+}
+
+/// How many of `syllables` fit onto the notes of `events`.
+///
+/// Unlike [`slot_capacity`] this stops at the end of the text. It is the
+/// capacity of one music line for one particular verse — not a property of the
+/// music alone, because an `ignoreMelismata` region lets a verse put text on
+/// notes another verse sings as a melisma.
+fn syllables_fitting(events: &[MusicEvent], flags: &[bool], syllables: &[Syllable]) -> usize {
+    let mut cursor = 0usize;
+
+    for (index, event) in events.iter().enumerate() {
+        if !event.is_note() {
+            continue;
+        }
+        if cursor >= syllables.len() {
+            break;
+        }
+        if note_takes_syllable(flags[index], syllables.get(cursor)) {
+            cursor += 1;
+        }
+    }
+
+    cursor
+}
+
 /// `flags` are the slot flags of `events` and must be sliced in step with it.
 ///
 /// Returns the rendered body together with the number of syllables it used, so
@@ -939,7 +1064,7 @@ fn render_syllables_over_notes(
             continue;
         }
 
-        if flags[index] {
+        if note_takes_syllable(flags[index], syllables.get(cursor)) {
             // Once the text has run out the remaining notes stay bare rather
             // than getting melisma markers for a syllable that is not there.
             let Some(syllable) = syllables.get(cursor) else {
@@ -1036,17 +1161,20 @@ fn segment_events(events: &[MusicEvent], reference: &[Vec<Syllable>]) -> Vec<(us
         let mut seen = 0usize;
 
         if is_last_line {
-            // Everything that is left belongs to the final line.
+            // Everything that is left belongs to the final line. Its slot count
+            // is the music's capacity, not the length of this verse's text —
+            // a shorter line is padded up to it.
             index = events.len();
-            seen = flags[start..].iter().filter(|f| **f).count();
+            seen = slot_capacity(&events[start..], &flags[start..], line);
         } else {
             while index < events.len() && seen < wanted {
-                if flags[index] {
+                if events[index].is_note() && note_takes_syllable(flags[index], line.get(seen)) {
                     seen += 1;
                 }
                 index += 1;
             }
-            // Pull trailing bar lines and rests into this line.
+            // Pull trailing bar lines and rests into this line. A melisma note
+            // belongs to the syllable before it, so it stays here too.
             while index < events.len() && !flags[index] {
                 index += 1;
             }
@@ -1119,8 +1247,14 @@ fn render_section(
 
             let is_last_segment = segment_index + 1 == segments.len();
             // Never write more syllables than the line has notes — ABC would
-            // drop the surplus and the text would slide out of alignment.
-            let take = (*slots).min(syllables.len() - cursor);
+            // drop the surplus and the text would slide out of alignment. The
+            // capacity is measured per verse: an `ignoreMelismata` region lets
+            // this one put text on notes another verse holds a syllable over.
+            let take = syllables_fitting(
+                &section.events[*start..*end],
+                &flags[*start..*end],
+                &syllables[cursor..],
+            );
 
             let mut chunk: Vec<Syllable> = syllables[cursor..cursor + take].to_vec();
             cursors[stream_index] = cursor + take;
@@ -1129,10 +1263,7 @@ fn render_section(
             // so the following lines stay aligned.
             if !is_last_segment && chunk.len() < *slots {
                 for _ in chunk.len()..*slots {
-                    chunk.push(Syllable {
-                        text: "*".to_string(),
-                        joined: false,
-                    });
+                    chunk.push(Syllable::plain("*", false));
                 }
             }
 
@@ -1663,10 +1794,7 @@ impl PartPhrases {
                 let mut syllables: Vec<Syllable> = line.clone();
                 // Pad so that the remaining words stay under the right notes.
                 while syllables.len() < slots {
-                    syllables.push(Syllable {
-                        text: "*".to_string(),
-                        joined: false,
-                    });
+                    syllables.push(Syllable::plain("*", false));
                 }
                 if !syllables.is_empty() {
                     let (mut line, used) = render_syllables_over_notes(
@@ -2167,6 +2295,148 @@ mod tests {
     #[test]
     fn test_rests_do_not_take_a_syllable_or_a_melisma_marker() {
         assert_eq!(w_line("c4 r4 d8( e )", "one two"), "one two _");
+    }
+
+    // --- Ignoring melismata ---------------------------------------------
+
+    /// Inside an `ignoreMelismata` region the text is spread over every note,
+    /// slur or no slur, so no `_` is emitted.
+    #[test]
+    fn test_set_ignore_melismata_spreads_the_text_over_every_note() {
+        assert_eq!(
+            w_line(
+                "c4( d ) e f",
+                "\\set ignoreMelismata = ##t one two three four"
+            ),
+            "one two three four"
+        );
+    }
+
+    /// The same music without the setting holds the first syllable.
+    #[test]
+    fn test_without_the_setting_the_slur_is_a_melisma_again() {
+        assert_eq!(w_line("c4( d ) e f", "one two three"), "one _ two three");
+    }
+
+    #[test]
+    fn test_unset_ignore_melismata_switches_back_mid_line() {
+        // Two slurs: the first falls inside the region and is spread over, the
+        // second is behind the `\unset` and becomes a melisma again.
+        assert_eq!(
+            w_line(
+                "c4( d ) e f( g ) a",
+                "\\set ignoreMelismata = ##t one two \\unset ignoreMelismata three four five"
+            ),
+            "one two three four _ five"
+        );
+    }
+
+    /// `##f` is the other way LilyPond turns the setting off.
+    #[test]
+    fn test_setting_ignore_melismata_to_false_turns_it_off() {
+        assert_eq!(
+            w_line(
+                "c4( d ) e",
+                "\\set ignoreMelismata = ##f one two"
+            ),
+            "one _ two"
+        );
+    }
+
+    /// The bracket form is the shorthand for the same thing.
+    #[test]
+    fn test_brackets_ignore_melismata() {
+        assert_eq!(w_line("c4( d ) e f", "[one two] three four"), "one two three four");
+    }
+
+    /// Brackets may hug their words rather than standing alone.
+    #[test]
+    fn test_brackets_may_be_attached_to_the_words() {
+        assert_eq!(w_line("c4( d ) e", "[Da -- rum] hier"), "Da-rum hier");
+    }
+
+    /// Outside the brackets the melisma is back.
+    #[test]
+    fn test_brackets_only_reach_to_the_closing_one() {
+        assert_eq!(
+            w_line("c4 d4( e ) f", "[one] two three"),
+            "one two _ three"
+        );
+    }
+
+    /// A `[` that is never closed must not swallow the rest of the song, and a
+    /// stray `]` must not underflow the nesting count.
+    #[test]
+    fn test_unbalanced_brackets_are_survivable() {
+        assert_eq!(w_line("c4( d ) e", "[one two"), "one two");
+        assert_eq!(w_line("c4( d ) e", "one] two"), "one _ two");
+    }
+
+    /// The setting holds across the lines of one lyrics block, the way
+    /// LilyPond's does — it ends at `\unset`, not at the line break.
+    #[test]
+    fn test_ignore_melismata_spans_lines_of_a_block() {
+        let lines = lyrics_to_lines("\\set ignoreMelismata = ##t one\ntwo\n\\unset ignoreMelismata three");
+        assert!(lines[0][0].ignore_melismata, "{:?}", lines);
+        assert!(lines[1][0].ignore_melismata, "the setting ended at the line break");
+        assert!(!lines[2][0].ignore_melismata, "{:?}", lines);
+    }
+
+    #[test]
+    fn test_brackets_span_lines_of_a_block() {
+        let lines = lyrics_to_lines("[one\ntwo]\nthree");
+        assert!(lines[0][0].ignore_melismata, "{:?}", lines);
+        assert!(lines[1][0].ignore_melismata, "{:?}", lines);
+        assert!(!lines[2][0].ignore_melismata, "{:?}", lines);
+    }
+
+    /// Commands other than `ignoreMelismata` are still dropped whole.
+    #[test]
+    fn test_other_commands_are_still_dropped_with_their_arguments() {
+        let syllables = lyrics_line_to_syllables("\\set fontSize = #2 one two");
+        assert_eq!(render_syllables(&syllables), "one two");
+    }
+
+    /// The case this exists for: one stanza needs a syllable on a note that
+    /// another stanza sings as a melisma. Both have to stay aligned, and the
+    /// following music line must start in the same place for both.
+    #[test]
+    fn test_stanzas_with_and_without_melismata_stay_aligned() {
+        let yml = r#"
+version: 0.1
+title: Mixed Melismata
+score:
+  key: c major
+  time: 4/4
+parts:
+  - type: stanza
+    contents:
+    - type: voice
+      number: 1
+      content: |
+        c4( d ) e f | g4 a b c
+    - type: lyrics
+      number: 1
+      content: |
+        one two three
+        four five six seven
+    - type: lyrics
+      number: 2
+      content: |
+        [ei ne] zwei drei
+        vier fünf sechs sieben
+"#;
+        let song = song_yml::import_from_yml_string(yml).unwrap();
+        let abc = abc_from_song(&song, &AbcSettings::default()).unwrap();
+
+        // The slur holds "one" in verse 1 but carries "ne" in verse 2.
+        assert!(abc.contains("w:1.~one _ two three"), "{}", abc);
+        assert!(abc.contains("w:2.~ei ne zwei drei"), "{}", abc);
+        // Both verses resume together on the second music line.
+        assert!(abc.contains("w:four five six seven"), "{}", abc);
+        assert!(abc.contains("w:vier fünf sechs sieben"), "{}", abc);
+        // Nothing was pushed past the end of the melody.
+        assert!(!abc.contains("% unaligned"), "{}", abc);
     }
 
     // --- Bar lines and rests --------------------------------------------

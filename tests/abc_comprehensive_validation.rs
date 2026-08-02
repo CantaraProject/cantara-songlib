@@ -387,6 +387,12 @@ fn test_bars_match_the_meter() {
 
 /// Each `w:` line has to carry exactly as many syllables as its music line has
 /// singable notes, otherwise the text drifts away from the melody.
+///
+/// `singable` counts slurs and ties as melismata, which is what the music says
+/// on its own. A verse that switches melismata off — `\set ignoreMelismata` or
+/// the `[…]` shorthand — legitimately carries *more* syllables than that, so a
+/// fixture using the feature would trip this check. Model the ignore regions
+/// here before adding one, rather than loosening the bound.
 #[test]
 fn test_lyrics_align_with_notes() {
     for path in TEST_FILES {

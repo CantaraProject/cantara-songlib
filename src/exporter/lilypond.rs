@@ -267,6 +267,65 @@ fn find_own_voice(part: &SongPart) -> Option<&SongPartContent> {
 }
 
 /// Find the first lyrics content in a part.
+/// Expand the `[…]` shorthand into LilyPond's own `ignoreMelismata` commands.
+///
+/// The bracket form is a Cantara convenience for "spread the text over every
+/// note here, slurs and all". LilyPond does not know it and would print the
+/// brackets as literal syllables, so they are translated on the way out.
+///
+/// Text without a bracket is handed back untouched — reflowing it would change
+/// the output of every song that never uses the feature.
+fn expand_ignore_melismata_brackets(lyrics: &str) -> String {
+    if !lyrics.contains('[') && !lyrics.contains(']') {
+        return lyrics.to_string();
+    }
+
+    let mut depth = 0usize;
+    let mut lines: Vec<String> = Vec::new();
+
+    for line in lyrics.lines() {
+        let mut words: Vec<String> = Vec::new();
+
+        for word in line.split_whitespace() {
+            let opened = word.chars().take_while(|c| *c == '[').count();
+            let word = &word[opened..];
+            let closing = word.chars().rev().take_while(|c| *c == ']').count();
+            let word = &word[..word.len() - closing];
+
+            if opened > 0 && depth == 0 {
+                words.push("\\set ignoreMelismata = ##t".to_string());
+            }
+            depth += opened;
+
+            if !word.is_empty() {
+                words.push(word.to_string());
+            }
+
+            let was_open = depth > 0;
+            depth = depth.saturating_sub(closing);
+            if closing > 0 && was_open && depth == 0 {
+                words.push("\\unset ignoreMelismata".to_string());
+            }
+        }
+
+        lines.push(words.join(" "));
+    }
+
+    let mut result = lines.join("\n");
+    // `lines()` drops a trailing newline; the callers indent whole blocks and
+    // expect the shape they were given.
+    if lyrics.ends_with('\n') {
+        result.push('\n');
+    }
+    result
+}
+
+/// Prepare a lyrics block for the LilyPond output: expand the bracket
+/// shorthand, then indent it like every other block.
+fn lyrics_block(text: &str) -> String {
+    indent_lines(&expand_ignore_melismata_brackets(text), "  ")
+}
+
 fn find_lyrics(part: &SongPart) -> Option<&SongPartContent> {
     part.contents.iter().find(|c| c.content_type.is_lyrics())
 }
@@ -715,7 +774,7 @@ pub fn lilypond_from_song(song: &Song, settings: &LilypondSettings) -> Result<St
                 lyric_defs.push(LyricsDefinition {
                     var_name,
                     stanza: Some(format!("{}.", verse_number)),
-                    content: indent_lines(&content.content, "  "),
+                    content: lyrics_block(&content.content),
                 });
                 verse_number += 1;
             }
@@ -733,7 +792,7 @@ pub fn lilypond_from_song(song: &Song, settings: &LilypondSettings) -> Result<St
             var_name: "chorus".to_string(),
             // No `\set stanza` — the refrain carries no verse number.
             stanza: None,
-            content: indent_lines(chorus_text.trim(), "  "),
+            content: lyrics_block(chorus_text.trim()),
         });
 
         if verse_refs.is_empty() {
@@ -797,7 +856,7 @@ pub fn lilypond_from_song(song: &Song, settings: &LilypondSettings) -> Result<St
                     lyric_defs.push(LyricsDefinition {
                         var_name,
                         stanza: Some(format!("R{}.", refrain_number)),
-                        content: indent_lines(&content.content, "  "),
+                        content: lyrics_block(&content.content),
                     });
                     refrain_number += 1;
                 }
@@ -933,7 +992,7 @@ pub fn lilypond_sequential_from_song(
                 lyrics_defs.push(LyricsDefinition {
                     var_name,
                     stanza: Some(format!("{}.", verse_number)),
-                    content: indent_lines(&content.content, "  "),
+                    content: lyrics_block(&content.content),
                 });
                 verse_number += 1;
             }
@@ -951,7 +1010,7 @@ pub fn lilypond_sequential_from_song(
                 lyrics_defs.push(LyricsDefinition {
                     var_name,
                     stanza: None,
-                    content: indent_lines(&content.content, "  "),
+                    content: lyrics_block(&content.content),
                 });
             }
         }
@@ -1125,7 +1184,7 @@ pub fn lilypond_parts_from_song(
             voice_content: voice_content.to_string(),
             voice_ref: format!("\\{}", voice_var),
             lyrics_var_name: lyrics_var.to_string(),
-            lyrics_content: indent_lines(lyrics_content, "  "),
+            lyrics_content: lyrics_block(lyrics_content),
             lyrics_ref: format!("\\{}", lyrics_var),
             stanza,
             staff_size: settings.staff_size,
@@ -2426,5 +2485,82 @@ parts:
         let result = lilypond_from_song(&song, &LilypondSettings::default());
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("neither voice nor lyrics"));
+    }
+
+    // --- The `[…]` ignoreMelismata shorthand ----------------------------
+
+    /// LilyPond has no bracket form, so it is translated into the commands it
+    /// does understand. Left alone, the brackets are engraved as text.
+    #[test]
+    fn test_brackets_become_lilypond_commands() {
+        assert_eq!(
+            expand_ignore_melismata_brackets("[al le vier] hier"),
+            "\\set ignoreMelismata = ##t al le vier \\unset ignoreMelismata hier"
+        );
+    }
+
+    #[test]
+    fn test_brackets_around_a_single_word() {
+        assert_eq!(
+            expand_ignore_melismata_brackets("one [two] three"),
+            "one \\set ignoreMelismata = ##t two \\unset ignoreMelismata three"
+        );
+    }
+
+    /// A region may run over the line break of a lyrics block.
+    #[test]
+    fn test_brackets_spanning_lines_are_translated_once() {
+        assert_eq!(
+            expand_ignore_melismata_brackets("[one\ntwo] three"),
+            "\\set ignoreMelismata = ##t one\ntwo \\unset ignoreMelismata three"
+        );
+    }
+
+    /// An unclosed bracket must not emit a dangling `\unset`, and a stray
+    /// closing one must not emit an `\unset` that was never opened.
+    #[test]
+    fn test_unbalanced_brackets_do_not_emit_stray_commands() {
+        assert_eq!(
+            expand_ignore_melismata_brackets("[one two"),
+            "\\set ignoreMelismata = ##t one two"
+        );
+        assert_eq!(expand_ignore_melismata_brackets("one] two"), "one two");
+    }
+
+    /// Lyrics without a bracket have to come back byte for byte — every song
+    /// that never uses the feature must keep its current output.
+    #[test]
+    fn test_text_without_brackets_is_untouched() {
+        let text = "A -- ma -- zing grace\nHow sweet   the sound\n";
+        assert_eq!(expand_ignore_melismata_brackets(text), text);
+    }
+
+    /// The translation reaches the actual export, not just the helper.
+    #[test]
+    fn test_export_translates_the_bracket_shorthand() {
+        let yml = r#"
+version: 0.1
+title: Brackets
+score:
+  key: c major
+  time: 4/4
+parts:
+  - type: stanza
+    contents:
+    - type: voice
+      number: 1
+      content: |
+        c4( d ) e f
+    - type: lyrics
+      number: 1
+      content: |
+        [one two] three
+"#;
+        let song = song_yml::import_from_yml_string(yml).unwrap();
+        let ly = lilypond_from_song(&song, &LilypondSettings::default()).unwrap();
+
+        assert!(ly.contains("\\set ignoreMelismata = ##t"), "{}", ly);
+        assert!(ly.contains("\\unset ignoreMelismata"), "{}", ly);
+        assert!(!ly.contains('['), "a bracket survived into the score:\n{}", ly);
     }
 }

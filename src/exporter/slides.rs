@@ -21,10 +21,11 @@ pub fn lyrics_for_reading(text: &str) -> String {
 
 /// Strip LilyPond lyric markup from lyrics text for presentation display.
 ///
-/// Removes syllable separators (`--`), melisma placeholders (`_`) and inline
-/// commands together with their arguments (e.g.
-/// `\set ignoreMelismata = ##t`, `\unset ignoreMelismata`), none of which are
-/// meant to be seen by the audience.
+/// Removes syllable separators (`--`), melisma placeholders (`_`), the `[…]`
+/// brackets that mark a region where melismata are ignored, and inline commands
+/// together with their arguments (e.g. `\set ignoreMelismata = ##t`,
+/// `\unset ignoreMelismata`) — none of which are meant to be seen by the
+/// audience.
 fn strip_lilypond_markers(text: &str) -> String {
     // Replace " -- " (syllable separator) with nothing, joining syllables
     let result = text.replace(" -- ", "");
@@ -56,6 +57,12 @@ fn strip_lilypond_markers_in_line(line: &str) -> String {
         }
         // `_` is LilyPond's melisma extender and carries no text.
         if word == "_" {
+            continue;
+        }
+        // `[…]` marks a region where melismata are ignored. The brackets are
+        // markup, not lyrics, and may hug the words they enclose.
+        let word = word.trim_start_matches('[').trim_end_matches(']');
+        if word.is_empty() {
             continue;
         }
         kept.push(word);
@@ -911,5 +918,29 @@ mod tests {
         let input = "A -- ma -- zing grace, How sweet the sound";
         let result = strip_lilypond_markers(input);
         assert_eq!(result, "Amazing grace, How sweet the sound");
+    }
+
+    /// The `[…]` region markers are markup for the engraver, not words. An
+    /// audience must never see them on a slide.
+    #[test]
+    fn test_ignore_melismata_brackets_are_stripped() {
+        assert_eq!(
+            strip_lilypond_markers("[al le vier] hier"),
+            "al le vier hier"
+        );
+        assert_eq!(strip_lilypond_markers("one [two] three"), "one two three");
+        // Brackets standing on their own leave no empty word behind.
+        assert_eq!(strip_lilypond_markers("[ one ]"), "one");
+    }
+
+    /// The command form is dropped with its arguments, as before.
+    #[test]
+    fn test_ignore_melismata_commands_are_stripped() {
+        assert_eq!(
+            strip_lilypond_markers(
+                "\\set ignoreMelismata = ##t one two \\unset ignoreMelismata three"
+            ),
+            "one two three"
+        );
     }
 }
