@@ -688,6 +688,63 @@ impl Song {
         self.parts.iter().any(|part| part.has_lyrics())
     }
 
+    /// Number the parts of each type through from 1, keeping their order.
+    ///
+    /// Importers that number parts by position leave gaps behind when a part is
+    /// reclassified afterwards: a song that opens with its refrain has that
+    /// block imported as `verse.1` and promoted to `chorus.1` once the repeat
+    /// shows up, which leaves the remaining verses starting at 2 and no
+    /// `verse.1` at all.
+    ///
+    /// The ids held in [`SongPart::is_repetition_of`] and in the singing orders
+    /// are moved along, so the song stays internally consistent.
+    ///
+    /// ```
+    /// use cantara_songlib::song::*;
+    /// let mut song = Song::new("Test");
+    /// song.add_part_of_type(SongPartType::Verse, Some(2));
+    /// song.add_part_of_type(SongPartType::Verse, Some(5));
+    /// song.renumber_parts();
+    /// assert!(song.part(&"verse.1".parse().unwrap()).is_some());
+    /// assert!(song.part(&"verse.2".parse().unwrap()).is_some());
+    /// ```
+    pub fn renumber_parts(&mut self) {
+        let mut next: BTreeMap<SongPartType, u32> = BTreeMap::new();
+        let mut mapping: BTreeMap<SongPartId, SongPartId> = BTreeMap::new();
+
+        for part in &self.parts {
+            let number = next.entry(part.part_type).or_insert(1);
+            mapping.insert(part.id(), SongPartId::new(part.part_type, *number));
+            *number += 1;
+        }
+
+        // Nothing moved — leave the song untouched rather than rewriting ids
+        // that are already right.
+        if mapping.iter().all(|(old, new)| old == new) {
+            return;
+        }
+
+        for part in &mut self.parts {
+            let number = mapping
+                .get(&part.id())
+                .map(|id| id.number)
+                .unwrap_or(part.number);
+            part.number = number;
+        }
+
+        for part in &mut self.parts {
+            if let Some(reference) = &part.is_repetition_of
+                && let Some(new_id) = mapping.get(reference)
+            {
+                part.is_repetition_of = Some(*new_id);
+            }
+        }
+
+        for order in &mut self.part_orders {
+            order.remap_ids(&mapping);
+        }
+    }
+
     /// Mutable access to every part.
     pub fn parts_mut(&mut self) -> &mut [SongPart] {
         &mut self.parts
@@ -922,6 +979,20 @@ impl PartOrder {
     /// The rule behind this order.
     pub fn rule(&self) -> &PartOrderRule {
         &self.rule
+    }
+
+    /// Rewrite the part ids this order refers to.
+    ///
+    /// Only [`PartOrderRule::Custom`] names parts explicitly; the other rules
+    /// are derived from the part types and need no adjustment.
+    fn remap_ids(&mut self, mapping: &BTreeMap<SongPartId, SongPartId>) {
+        if let PartOrderRule::Custom(ids) = &mut self.rule {
+            for id in ids.iter_mut() {
+                if let Some(new_id) = mapping.get(id) {
+                    *id = *new_id;
+                }
+            }
+        }
     }
 
     /// Guess an order from the parts a song has.
@@ -1167,6 +1238,96 @@ mod tests {
         assert_eq!(song.part_count_of_type(SongPartType::Refrain), 1);
         assert_eq!(song.chorus_like_parts().count(), 1);
         assert_eq!(song.part_count(), 3);
+    }
+
+    // --- Renumbering ----------------------------------------------------
+
+    /// The part ids of a song, in storage order.
+    fn ids(song: &Song) -> Vec<String> {
+        song.parts()
+            .iter()
+            .map(|part| part.id().to_string())
+            .collect()
+    }
+
+    #[test]
+    fn test_renumber_closes_gaps_per_type() {
+        let mut song = Song::new("Test");
+        song.add_part_of_type(SongPartType::Chorus, Some(1));
+        song.add_part_of_type(SongPartType::Verse, Some(2));
+        song.add_part_of_type(SongPartType::Verse, Some(3));
+        song.add_part_of_type(SongPartType::Verse, Some(7));
+
+        song.renumber_parts();
+
+        assert_eq!(ids(&song), ["chorus.1", "verse.1", "verse.2", "verse.3"]);
+    }
+
+    #[test]
+    fn test_renumber_leaves_a_correct_song_alone() {
+        let mut song = Song::new("Test");
+        song.add_part_of_type(SongPartType::Verse, Some(1));
+        song.add_part_of_type(SongPartType::Chorus, Some(1));
+        song.add_part_of_type(SongPartType::Verse, Some(2));
+
+        let before = ids(&song);
+        song.renumber_parts();
+
+        assert_eq!(ids(&song), before);
+    }
+
+    /// A repetition points at another part by id, so it has to follow the part
+    /// it names rather than keep pointing at the old number.
+    #[test]
+    fn test_renumber_moves_repetition_references_along() {
+        let mut song = Song::new("Test");
+        let first = song.add_part_of_type(SongPartType::Verse, Some(2));
+        song.part_mut(&first)
+            .unwrap()
+            .add_content(SongPartContent::new(
+                SongPartContentType::LeadVoice,
+                "c4 d e f",
+            ));
+        let second = song.add_part_of_type(SongPartType::Verse, Some(3));
+        song.part_mut(&second).unwrap().is_repetition_of = Some(first);
+
+        song.renumber_parts();
+
+        let renumbered = song.part(&"verse.2".parse().unwrap()).unwrap();
+        assert_eq!(
+            renumbered.is_repetition_of,
+            Some("verse.1".parse().unwrap()),
+            "the reference still points at the old number"
+        );
+        // The melody is still reachable through the moved reference.
+        assert_eq!(song.voice_for_part(renumbered).unwrap().content, "c4 d e f");
+    }
+
+    /// An explicit singing order names parts by id and has to be rewritten too.
+    #[test]
+    fn test_renumber_rewrites_a_custom_order() {
+        let mut song = Song::new("Test");
+        song.add_part_of_type(SongPartType::Chorus, Some(1));
+        song.add_part_of_type(SongPartType::Verse, Some(2));
+        song.add_part_of_type(SongPartType::Verse, Some(3));
+
+        song.part_orders.push(PartOrder::new(
+            PartOrderName::Default,
+            PartOrderRule::Custom(vec![
+                "chorus.1".parse().unwrap(),
+                "verse.2".parse().unwrap(),
+                "chorus.1".parse().unwrap(),
+                "verse.3".parse().unwrap(),
+            ]),
+        ));
+
+        song.renumber_parts();
+
+        let PartOrderRule::Custom(order) = song.part_orders[0].rule() else {
+            panic!("the custom rule was replaced");
+        };
+        let named: Vec<String> = order.iter().map(|id| id.to_string()).collect();
+        assert_eq!(named, ["chorus.1", "verse.1", "chorus.1", "verse.2"]);
     }
 
     // --- Repetitions ----------------------------------------------------

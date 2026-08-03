@@ -115,6 +115,8 @@ fn song_from_yml(yml: SongYmlFile) -> Result<Song, Box<dyn Error>> {
             // single part carrying just the music.
             let id = song.add_part_of_type(part_type, Some(1));
             let part = song.part_mut(&id).unwrap();
+            // The heading the file gave this part, e.g. "Strophe".
+            part.label = yml_part.name.clone();
             for voice in &voice_contents {
                 part.add_content(map_voice_content(voice));
             }
@@ -145,6 +147,8 @@ fn song_from_yml(yml: SongYmlFile) -> Result<Song, Box<dyn Error>> {
         for (number, group) in &groups {
             let id = song.add_part_of_type(part_type, *number);
             let part = song.part_mut(&id).unwrap();
+            // Every verse of the block keeps the block's heading.
+            part.label = yml_part.name.clone();
 
             if first_id.is_none() {
                 for voice in &voice_contents {

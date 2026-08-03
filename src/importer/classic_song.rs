@@ -120,6 +120,13 @@ pub fn import_song(content: &str) -> Result<Song, Box<dyn Error>> {
     }
     parse_block(&block, &mut song)?;
 
+    // Blocks are numbered by position while they are read, because their role
+    // is only known once a repeat shows up. A song that opens with its refrain
+    // therefore has that block numbered 1 and promoted to `chorus.1`, leaving
+    // the verses to start at 2 with no `verse.1`. Close those gaps before
+    // anything refers to the ids.
+    song.renumber_parts();
+
     // The classic format states no singing order, so it is guessed from the
     // blocks: a refrain is sung after every verse. Without this the song would
     // come out of `Song::ordered_parts` in storage order, with the refrain
@@ -397,6 +404,89 @@ mod test {
             .to_string();
         let song = import_song(&content).unwrap();
         assert_eq!(song.part_count_of_type(SongPartType::Verse), 2);
+    }
+
+    /// The part ids of a song, in storage order.
+    fn part_ids(song: &Song) -> Vec<String> {
+        song.parts()
+            .iter()
+            .map(|part| part.id().to_string())
+            .collect()
+    }
+
+    /// A song that opens with its refrain used to lose `verse.1`: the opening
+    /// block was numbered 1 as a verse and then promoted to `chorus.1`, so the
+    /// verses started at 2 and nothing referred to a first one.
+    #[test]
+    fn test_a_song_starting_with_the_refrain_numbers_its_verses_from_one() {
+        let content = "#title: Alles was ihr tut
+
+Alles was ihr tut, gescheh in Liebe,
+
+Die Liebe ist sanftmütig und gütig.
+
+Alles was ihr tut, gescheh in Liebe,
+
+Jesus hat uns stets gelehrt zu lieben.
+
+Alles was ihr tut, gescheh in Liebe,
+
+Wir lieben nun weil Gott zuerst geliebt.";
+
+        let song = import_song(content).unwrap();
+
+        assert_eq!(
+            part_ids(&song),
+            ["chorus.1", "verse.1", "verse.2", "verse.3"]
+        );
+        assert!(
+            song.part(&"verse.1".parse().unwrap()).is_some(),
+            "a song always has a first verse"
+        );
+    }
+
+    /// The ordinary case must keep the numbering it already had.
+    #[test]
+    fn test_a_song_starting_with_a_verse_keeps_its_numbering() {
+        let content = "#title: Test Song
+
+This is a verse
+
+And a refrain
+
+The second verse
+
+And a refrain";
+
+        let song = import_song(content).unwrap();
+
+        assert_eq!(part_ids(&song), ["verse.1", "chorus.1", "verse.2"]);
+    }
+
+    /// Renumbering happens before the singing order is guessed, so the order
+    /// has to name parts that actually exist.
+    #[test]
+    fn test_the_guessed_order_refers_to_existing_parts() {
+        let content = "#title: Refrain First
+
+The refrain
+
+A verse
+
+The refrain
+
+Another verse";
+
+        let song = import_song(content).unwrap();
+
+        for part in song.part_orders.first().unwrap().to_parts(&song) {
+            let id = part.id();
+            assert!(
+                song.part(&id).is_some(),
+                "the order names {} which the song does not have",
+                id
+            );
+        }
     }
 
     #[test]

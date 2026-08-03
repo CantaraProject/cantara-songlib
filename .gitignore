@@ -1,5 +1,6 @@
 /target
 .idea/
+.claude/
 
 # Exporter output produced while trying things out
 *.pdf
