@@ -10,91 +10,146 @@ extern crate regex;
 use regex::{Regex,RegexBuilder};
 
 use crate::importer::errors::CantaraImportNoContentError;
-use crate::song::{LyricLanguage, Song, SongPartContent, SongPartId, SongPartType};
+use crate::song::{
+    LyricLanguage, PartOrder, PartOrderName, PartOrderRule, Song, SongPartContent, SongPartId,
+    SongPartType,
+};
 
 use crate::slides::*;
 use crate::templating::MetaTemplate;
 
 use crate::importer::metadata::*;
 
-/// Parse one block (a paragraph) of a classic `.song` file into the song.
+/// Read the metadata block of a classic `.song` file into the song.
 ///
-/// The classic format has no markup for song structure. A block that repeats an
-/// earlier block verbatim is therefore the refrain, and this is how it is
-/// detected: the *earlier* occurrence is promoted from a verse to a chorus and
-/// the repeat is dropped, so the text is stored exactly once.
-fn parse_block(block: &str, song: &mut Song) -> Result<(), Box<dyn Error>> {
-    if block.trim().is_empty() {
-        return Ok(());
-    }
+/// A block starting with `#` holds `#tag: value` lines rather than lyrics.
+fn parse_metadata(block: &str, song: &mut Song) {
+    // Compile the regex only once.
+    let tags_regex = {
+        static TAGS_REGEX: OnceLock<Regex> = OnceLock::new();
+        TAGS_REGEX.get_or_init(|| {
+            RegexBuilder::new(r"\s*#(\w+):\s*(.+)$")
+                .multi_line(true)
+                .build()
+                .unwrap()
+        })
+    };
 
-    // A block starting with '#' holds `#tag: value` metadata.
-    if block.starts_with('#') {
-        // Compile the regex only once.
-        let tags_regex = {
-            static TAGS_REGEX: OnceLock<Regex> = OnceLock::new();
-            TAGS_REGEX.get_or_init(|| {
-                RegexBuilder::new(r"\s*#(\w+):\s*(.+)$")
-                    .multi_line(true)
-                    .build()
-                    .unwrap()
-            })
-        };
-
-        for capture in tags_regex.captures_iter(block) {
-            let tag = capture.get(1).unwrap().as_str().to_lowercase();
-            let value = capture.get(2).unwrap().as_str();
-            song.set_tag(&tag, value);
-            if tag == "title" {
-                song.title = value.to_string();
-            }
+    for capture in tags_regex.captures_iter(block) {
+        let tag = capture.get(1).unwrap().as_str().to_lowercase();
+        let value = capture.get(2).unwrap().as_str();
+        song.set_tag(&tag, value);
+        if tag == "title" {
+            song.title = value.to_string();
         }
-        return Ok(());
     }
-
-    if let Some(earlier) = song.last_part_with_content(block).map(|part| part.id()) {
-        promote_to_chorus(song, earlier);
-        return Ok(());
-    }
-
-    let id = song.add_part_of_type(SongPartType::Verse, None);
-    // Unwrap is safe: the part was just added.
-    song.part_mut(&id)
-        .unwrap()
-        .add_content(SongPartContent::lyrics(LyricLanguage::Default, block));
-
-    Ok(())
 }
 
-/// Turn an already imported verse into the song's chorus.
+/// One run of consecutive blocks that belong together, as it appears in the
+/// file.
+struct Run {
+    /// The blocks of this run, in file order.
+    blocks: Vec<String>,
+    /// Whether every block of the run is a repeated one, i.e. a refrain.
+    refrain: bool,
+}
+
+/// Split the block sequence into runs of refrain blocks and runs of other
+/// blocks.
 ///
-/// Called when a block turns out to be repeated. The part keeps its position in
-/// the part list — the ordering rules go by type, not by position — but gets a
-/// free chorus number so that no two parts end up with the same id.
-fn promote_to_chorus(song: &mut Song, id: SongPartId) {
-    if id.part_type.is_chorus_like() {
-        // Already recognised as the refrain on an earlier repeat.
-        return;
+/// A block that occurs more than once in the file is a refrain block; anything
+/// else is verse material. Consecutive blocks of the same kind form one run, so
+/// that a refrain written as two paragraphs comes out as a single refrain and
+/// the blocks between two refrains come out as a single verse.
+///
+/// Grouping only means something relative to a refrain. A song without one is
+/// nothing but a list of verses — gathering those up would turn the three
+/// verses of "Amazing Grace" into one — so there every block stays its own
+/// part.
+fn split_into_runs(blocks: &[String]) -> Vec<Run> {
+    let mut occurrences: HashMap<&str, usize> = HashMap::new();
+    for block in blocks {
+        *occurrences.entry(block.as_str()).or_insert(0) += 1;
+    }
+    let is_refrain = |block: &String| occurrences[block.as_str()] > 1;
+    let has_refrain = blocks.iter().any(is_refrain);
+
+    let mut runs: Vec<Run> = Vec::new();
+    for block in blocks {
+        let refrain = is_refrain(block);
+        match runs.last_mut() {
+            // Verses are only gathered up when there is a refrain to gather
+            // them between; refrain blocks always are.
+            Some(run) if run.refrain == refrain && (refrain || has_refrain) => {
+                run.blocks.push(block.clone())
+            }
+            _ => runs.push(Run {
+                blocks: vec![block.clone()],
+                refrain,
+            }),
+        }
     }
 
-    let mut number = 1;
-    while song
-        .part(&SongPartId::new(SongPartType::Chorus, number))
-        .is_some()
-    {
-        number += 1;
-    }
-
-    if let Some(part) = song.part_mut(&id) {
-        part.part_type = SongPartType::Chorus;
-        part.number = number;
-    }
+    runs
 }
 
-/// Imports a song from a str which contains the song in the Cantara classic song format.
-/// The function reads the content of the str and returns a result with a Song or an error.
-/// The function guesses the part types (Refrain/Chorus, Verse, Bridge, etc.) based on the content and
-/// keeps the song order which is provided.
+/// The length of the shortest piece `run` is a whole repetition of.
+///
+/// A refrain written out twice in a row is one run of blocks, and nothing
+/// outside it says where the seam is. Its own period does: `A B A B` repeats
+/// after two blocks, so the refrain is `A B` sung twice rather than a single
+/// refrain of four blocks.
+fn repeating_period(run: &[String]) -> usize {
+    (1..=run.len())
+        .find(|period| {
+            run.len().is_multiple_of(*period)
+                && run
+                    .iter()
+                    .enumerate()
+                    .all(|(index, block)| *block == run[index % period])
+        })
+        .unwrap_or(run.len())
+}
+
+/// Match a refrain run against the refrains already seen.
+///
+/// A song that closes by singing its refrain twice produces a run of two
+/// refrain blocks where the earlier runs held one. Matching greedily against
+/// the longest refrain already known splits such a run back into repeats of it,
+/// instead of inventing a second refrain that holds the text twice. When
+/// nothing is known yet — the run *is* the first occurrence — the run's own
+/// period does the same job.
+fn split_refrain_run<'a>(run: &'a [String], known: &[Vec<String>]) -> Vec<&'a [String]> {
+    let mut pieces: Vec<&[String]> = Vec::new();
+    let mut rest = run;
+
+    while !rest.is_empty() {
+        let matched = known
+            .iter()
+            .filter(|refrain| rest.starts_with(refrain))
+            .map(|refrain| refrain.len())
+            .max()
+            .unwrap_or_else(|| repeating_period(rest));
+
+        pieces.push(&rest[..matched]);
+        rest = &rest[matched..];
+    }
+
+    pieces
+}
+
+/// Import a song written in the classic Cantara `.song` format.
+///
+/// The format states no structure of its own: blocks are separated by blank
+/// lines and nothing says which one is the refrain. A block that occurs more
+/// than once is therefore taken to be the refrain, and consecutive blocks of
+/// the same kind form one part — so a refrain written as two paragraphs, or a
+/// verse written as two, comes out as a single part rather than several.
+///
+/// **The singing order is never rearranged.** The file states it explicitly by
+/// listing the blocks, so the order is read off the file rather than guessed. A
+/// refrain that is only sung after every second verse stays that way, and a
+/// refrain the file never repeats is not inserted anywhere.
 pub fn import_song(content: &str) -> Result<Song, Box<dyn Error>> {
     if content.is_empty() {
         return Err(Box::new(CantaraImportNoContentError {}));
@@ -108,32 +163,100 @@ pub fn import_song(content: &str) -> Result<Song, Box<dyn Error>> {
 
     let mut song: Song = Song::new(&title);
 
-    let mut block: String = String::new();
+    // --- Split the file into blocks, keeping their order ---
+
+    let mut lyric_blocks: Vec<String> = Vec::new();
+    let mut block = String::new();
+    let finish = |block: &mut String, song: &mut Song, blocks: &mut Vec<String>| {
+        let text = block.trim().to_string();
+        block.clear();
+        if text.is_empty() {
+            return;
+        }
+        if text.starts_with('#') {
+            parse_metadata(&text, song);
+        } else {
+            blocks.push(text);
+        }
+    };
+
     for line in content.trim().lines() {
         if line.trim().is_empty() {
-            parse_block(&block, &mut song)?;
-            block.clear();
+            finish(&mut block, &mut song, &mut lyric_blocks);
         } else {
             block.push_str(line.trim());
             block.push('\n');
         }
     }
-    parse_block(&block, &mut song)?;
+    finish(&mut block, &mut song, &mut lyric_blocks);
 
-    // Blocks are numbered by position while they are read, because their role
-    // is only known once a repeat shows up. A song that opens with its refrain
-    // therefore has that block numbered 1 and promoted to `chorus.1`, leaving
-    // the verses to start at 2 with no `verse.1`. Close those gaps before
-    // anything refers to the ids.
-    song.renumber_parts();
+    // --- Turn the runs into parts, remembering the order they are sung in ---
 
-    // The classic format states no singing order, so it is guessed from the
-    // blocks: a refrain is sung after every verse. Without this the song would
-    // come out of `Song::ordered_parts` in storage order, with the refrain
-    // appearing only where it happened to be stored.
-    song.add_guessed_part_order();
+    let runs = split_into_runs(&lyric_blocks);
+
+    // The refrains seen so far, each as its sequence of blocks.
+    let mut refrains: Vec<Vec<String>> = Vec::new();
+    let mut order: Vec<SongPartId> = Vec::new();
+
+    for run in &runs {
+        if !run.refrain {
+            let id = song.add_part_of_type(SongPartType::Verse, None);
+            song.part_mut(&id)
+                .unwrap()
+                .add_content(SongPartContent::lyrics(
+                    LyricLanguage::Default,
+                    run.blocks.join("\n"),
+                ));
+            order.push(id);
+            continue;
+        }
+
+        for piece in split_refrain_run(&run.blocks, &refrains) {
+            let id = match refrains.iter().position(|refrain| refrain == piece) {
+                // Sung again: the text is stored once and referred to twice.
+                Some(index) => SongPartId::new(SongPartType::Chorus, index as u32 + 1),
+                None => {
+                    refrains.push(piece.to_vec());
+                    let id = song.add_part_of_type(SongPartType::Chorus, None);
+                    song.part_mut(&id)
+                        .unwrap()
+                        .add_content(SongPartContent::lyrics(
+                            LyricLanguage::Default,
+                            piece.join("\n"),
+                        ));
+                    id
+                }
+            };
+            order.push(id);
+        }
+    }
+
+    // --- Record the order ---
+
+    song.part_orders.push(order_for(&song, order));
 
     Ok(song)
+}
+
+/// Describe a sung order, preferring a standard rule when it says the same
+/// thing.
+///
+/// A rule keeps the file small and readable, but only if it reproduces the
+/// order exactly. Rather than reasoning about when that holds, the candidate
+/// rules are applied and their result compared with the order actually read
+/// from the file; anything that does not match is written out part by part.
+fn order_for(song: &Song, order: Vec<SongPartId>) -> PartOrder {
+    for rule in [
+        PartOrderRule::VerseRefrainBridgeRefrain,
+        PartOrderRule::RefrainVerseBridgeRefrain,
+    ] {
+        let candidate = PartOrder::new(PartOrderName::Default, rule);
+        if candidate.to_part_ids(song) == order {
+            return candidate;
+        }
+    }
+
+    PartOrder::new(PartOrderName::Default, PartOrderRule::Custom(order))
 }
 
 /// Generates slides from a classic song content which is provided as &str
@@ -543,6 +666,222 @@ Another verse";
             .map(|part| part.id().to_string())
             .collect();
         assert_eq!(sung, ["verse.1", "verse.2", "verse.3"]);
+    }
+
+    // --- The order is read off the file, never rearranged ----------------
+
+    /// The parts in singing order.
+    fn sung(song: &Song) -> Vec<String> {
+        song.ordered_parts()
+            .iter()
+            .map(|part| part.id().to_string())
+            .collect()
+    }
+
+    /// The text a song is actually sung as, block by block.
+    fn sung_text(song: &Song) -> Vec<String> {
+        song.ordered_parts()
+            .iter()
+            .flat_map(|part| {
+                part.contents
+                    .iter()
+                    .filter(|c| c.content_type.is_lyrics())
+                    .map(|c| c.content.trim().to_string())
+            })
+            .collect()
+    }
+
+    /// The heart of it: a classic file states its order by listing the blocks,
+    /// so the import must reproduce that list and never rearrange it.
+    ///
+    /// This song sings its refrain after every *second* verse block. The order
+    /// used to be rebuilt from the rule "refrain after every verse", which both
+    /// moved the refrain and dropped its second half.
+    #[test]
+    fn test_a_refrain_after_every_second_block_is_not_moved() {
+        let content = "#title: Vivek
+
+Verse one, first half.
+
+Verse one, second half.
+
+Refrain, first half.
+
+Refrain, second half.
+
+Verse two, first half.
+
+Verse two, second half.
+
+Refrain, first half.
+
+Refrain, second half.";
+
+        let song = import_song(content).unwrap();
+
+        // Two blocks between the refrains are one verse; the two-block refrain
+        // is one refrain.
+        assert_eq!(sung(&song), ["verse.1", "chorus.1", "verse.2", "chorus.1"]);
+        assert_eq!(
+            sung_text(&song),
+            [
+                "Verse one, first half.\nVerse one, second half.",
+                "Refrain, first half.\nRefrain, second half.",
+                "Verse two, first half.\nVerse two, second half.",
+                "Refrain, first half.\nRefrain, second half.",
+            ]
+        );
+    }
+
+    /// Nothing may be inserted that the file does not sing: a refrain that only
+    /// comes at the end stays at the end.
+    #[test]
+    fn test_a_refrain_is_never_inserted_where_the_file_has_none() {
+        let content = "#title: Late Refrain
+
+Verse one.
+
+The refrain.
+
+Verse two.
+
+Verse three.
+
+The refrain.";
+
+        let song = import_song(content).unwrap();
+
+        assert_eq!(
+            sung(&song),
+            ["verse.1", "chorus.1", "verse.2", "chorus.1"],
+            "verses two and three are one run between the refrains"
+        );
+    }
+
+    /// With the refrain after every verse the plain rule says the same thing,
+    /// so it is used instead of spelling the order out.
+    #[test]
+    fn test_a_regular_song_uses_the_standard_rule() {
+        let content = "#title: Regular
+
+Verse one.
+
+The refrain.
+
+Verse two.
+
+The refrain.";
+
+        let song = import_song(content).unwrap();
+
+        assert_eq!(
+            song.part_orders[0].rule(),
+            &crate::song::PartOrderRule::VerseRefrainBridgeRefrain
+        );
+        assert_eq!(sung(&song), ["verse.1", "chorus.1", "verse.2", "chorus.1"]);
+    }
+
+    /// An irregular song gets its order written out part by part. This one ends
+    /// on a verse; the plain rule would sing the refrain once more.
+    #[test]
+    fn test_an_irregular_song_gets_a_custom_order() {
+        let content = "#title: Irregular
+
+Verse one.
+
+The refrain.
+
+Verse two.
+
+The refrain.
+
+Verse three.";
+
+        let song = import_song(content).unwrap();
+
+        assert!(
+            matches!(
+                song.part_orders[0].rule(),
+                crate::song::PartOrderRule::Custom(_)
+            ),
+            "expected an explicit order, got {:?}",
+            song.part_orders[0].rule()
+        );
+        assert_eq!(
+            sung(&song),
+            ["verse.1", "chorus.1", "verse.2", "chorus.1", "verse.3"],
+            "the song must not gain a closing refrain"
+        );
+    }
+
+    /// A refrain written as two paragraphs is one refrain, not two. Splitting
+    /// it used to lose the second half entirely.
+    #[test]
+    fn test_a_two_block_refrain_is_a_single_part() {
+        let content = "#title: Two Block Refrain
+
+Verse one.
+
+Refrain A.
+
+Refrain B.
+
+Verse two.
+
+Refrain A.
+
+Refrain B.";
+
+        let song = import_song(content).unwrap();
+
+        assert_eq!(song.part_count_of_type(SongPartType::Chorus), 1);
+        assert!(
+            sung_text(&song).contains(&"Refrain A.\nRefrain B.".to_string()),
+            "{:?}",
+            sung_text(&song)
+        );
+        // Both halves are sung, both times.
+        let all = sung_text(&song).join("\n");
+        assert_eq!(all.matches("Refrain B.").count(), 2, "{}", all);
+    }
+
+    /// Without a refrain there is nothing to group verses between, so every
+    /// block stays a verse of its own — three verses, not one long one.
+    #[test]
+    fn test_verses_are_not_merged_without_a_refrain() {
+        let song: Song = import_song_from_file("tests/data/Amazing Grace.song").unwrap();
+
+        assert_eq!(song.part_count_of_type(SongPartType::Verse), 3);
+    }
+
+    /// A refrain sung twice in a row is one run of blocks with nothing outside
+    /// it to mark the seam. Its own period supplies it: `A B A B` is `A B`
+    /// twice, not one refrain of four blocks.
+    #[test]
+    fn test_a_refrain_repeated_back_to_back_is_split() {
+        let content = "#title: Doubled
+
+Refrain A.
+
+Refrain B.
+
+Refrain A.
+
+Refrain B.
+
+A verse.
+
+Refrain A.
+
+Refrain B.";
+
+        let song = import_song(content).unwrap();
+
+        assert_eq!(song.part_count_of_type(SongPartType::Chorus), 1);
+        assert_eq!(
+            sung(&song),
+            ["chorus.1", "chorus.1", "verse.1", "chorus.1"]
+        );
     }
 
     #[test]
