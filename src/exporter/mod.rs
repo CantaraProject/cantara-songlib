@@ -8,6 +8,8 @@ pub mod abc;
 
 pub mod text;
 
+pub mod song_yml;
+
 use crate::song::{Song, SongPartType};
 
 /// One block of readable lyrics: a label such as `"1."` or `"Refrain"` and the

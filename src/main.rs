@@ -145,6 +145,10 @@ enum Commands {
         #[arg(long, default_value = "true", action = clap::ArgAction::Set)]
         all_verses: bool,
     },
+
+    /// Writes the song in the `.song.yml` format, e.g. to convert a classic
+    /// `.song` file into it
+    SongYml,
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -326,6 +330,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 // the ABC standard wants between two tunes.
                 println!("{}", renumber_tune(&abc_output, tune_number));
             }
+        }
+
+        Commands::SongYml => {
+            // One `.song.yml` file holds exactly one song.
+            let file = only(inputs(&cli.files)?)?;
+            let song = import_song_from_file(file)?;
+            print!("{}", exporter::song_yml::song_yml_from_song(&song)?);
         }
     }
 

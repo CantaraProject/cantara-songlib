@@ -411,8 +411,26 @@ mod tests {
 
         let text = text_from_song(&amazing_grace(), &settings).unwrap();
         assert!(text.starts_with("Amazing Grace [en]"));
-        assert!(text.contains("1. verse.1: Amazing grace"));
-        assert!(text.contains("2. verse.2: Twas grace"));
+        // `label` is the heading the source file gave the part. This fixture
+        // names its parts `stanza`, so that is what a reader gets; the part id
+        // is available separately as `{{id}}`.
+        assert!(text.contains("1. stanza: Amazing grace"), "{}", text);
+        assert!(text.contains("2. stanza: Twas grace"), "{}", text);
+    }
+
+    /// Without a heading in the source file, `label` falls back to the part id.
+    #[test]
+    fn test_custom_template_falls_back_to_the_part_id() {
+        let settings = TextSettings::with_format(TextFormat::Custom(
+            "{{#each parts}}{{label}}\n{{/each}}".to_string(),
+        ));
+
+        let content =
+            std::fs::read_to_string("tests/data/What a friend we have in Jesus.song").unwrap();
+        let song = crate::importer::classic_song::import_song(&content).unwrap();
+
+        let text = text_from_song(&song, &settings).unwrap();
+        assert!(text.contains("verse.1"), "{}", text);
     }
 
     #[test]
