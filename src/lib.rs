@@ -428,7 +428,9 @@ fn c_optional_string_to_option(c_str: *const c_char) -> Result<Option<String>, S
 fn rust_string_to_c_char(rust_str: String) -> *const c_char {
     match CString::new(rust_str) {
         Ok(c_string) => c_string.into_raw() as *const c_char,
-        Err(_) => std::ptr::null(),
+        Err(_) => CString::new("error: output contained interior null byte")
+            .expect("fallback error string does not contain interior null bytes")
+            .into_raw() as *const c_char,
     }
 }
 
