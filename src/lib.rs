@@ -73,6 +73,10 @@ assert!(sheet.contains("\\score"));
 
 use importer::classic_song::slides_from_classic_song;
 use importer::errors::*;
+use importer::import_song_from_file;
+use exporter::abc::AbcSettings;
+use exporter::lilypond::LilypondSettings;
+use exporter::text::{text_from_song, TextFormat, TextSettings};
 use slides::{LanguageConfiguration, ShowMetaInformation, Slide, SlideSettings};
 use std::error::Error;
 use std::ffi::{c_char, c_int, CStr, CString};
@@ -92,6 +96,7 @@ pub mod song;
 #[doc = include_str!("../docs/meta-information.md")]
 #[doc = include_str!("../docs/complex-slides.md")]
 #[doc = include_str!("../docs/text-export.md")]
+#[doc = include_str!("../docs/c-api.md")]
 pub struct DocumentationExamples;
 
 pub mod importer;
@@ -119,6 +124,7 @@ pub mod exporter;
 ///
 /// # Returns
 /// The slides as a `*const c_char`.
+#[unsafe(no_mangle)]
 pub extern "C" fn create_presentation_from_file_c(
     c_file_path: *const c_char,
     c_title_slide: c_int,
@@ -128,7 +134,10 @@ pub extern "C" fn create_presentation_from_file_c(
     c_empty_last_side: c_int,
     c_max_lines: c_int
 ) -> *const c_char {
-    let file_path: PathBuf = PathBuf::from(c_string_to_rust(c_file_path).unwrap());
+    let file_path: PathBuf = match c_string_to_rust(c_file_path) {
+        Ok(path) => PathBuf::from(path),
+        Err(error) => return rust_string_to_c_char(error),
+    };
     let title_slide: bool = c_title_slide == 1;
     let show_spoiler: bool = c_show_spoiler == 1;
     // A bit mask: bit 0 = first content slide, bit 1 = last, bit 2 = title
@@ -136,7 +145,10 @@ pub extern "C" fn create_presentation_from_file_c(
     // became selectable, so existing callers are unaffected.
     let show_meta_information = ShowMetaInformation::from_bits(c_show_meta_information as u8);
     
-    let meta_syntax = c_string_to_rust(c_meta_syntax).unwrap();
+    let meta_syntax = match c_string_to_rust(c_meta_syntax) {
+        Ok(syntax) => syntax,
+        Err(error) => return rust_string_to_c_char(error),
+    };
     
     let empty_last_slide: bool = c_empty_last_side == 1;
     
@@ -156,8 +168,179 @@ pub extern "C" fn create_presentation_from_file_c(
     };
     
     match create_presentation_from_file(file_path, slide_settings) {
-        Ok(v) => rust_string_to_c_char(serde_json::to_string(&v).unwrap()).unwrap(),
-        Err(err) => rust_string_to_c_char(err.to_string()).unwrap(),
+        Ok(v) => match serde_json::to_string(&v) {
+            Ok(slides_json) => rust_string_to_c_char(slides_json),
+            Err(error) => rust_string_to_c_char(error.to_string()),
+        },
+        Err(err) => rust_string_to_c_char(err.to_string()),
+    }
+}
+
+/// Loads a song from a file and returns its JSON representation.
+#[unsafe(no_mangle)]
+pub extern "C" fn get_song_from_file_as_json_c(c_file_path: *const c_char) -> *const c_char {
+    let file_path = match c_string_to_rust(c_file_path) {
+        Ok(path) => path,
+        Err(error) => return rust_string_to_c_char(error),
+    };
+
+    match importer::get_song_from_file_as_json(&file_path) {
+        Ok(song_json) => rust_string_to_c_char(song_json),
+        Err(error) => rust_string_to_c_char(error.to_string()),
+    }
+}
+
+/// Exports a song as text from a supported song file.
+#[unsafe(no_mangle)]
+pub extern "C" fn create_text_from_file_c(
+    c_file_path: *const c_char,
+    c_format: *const c_char,
+    c_template: *const c_char,
+    c_language: *const c_char,
+    c_separator: *const c_char,
+) -> *const c_char {
+    let file_path = match c_string_to_rust(c_file_path) {
+        Ok(path) => path,
+        Err(error) => return rust_string_to_c_char(error),
+    };
+
+    let format_name = match c_string_to_rust(c_format) {
+        Ok(format) => format,
+        Err(error) => return rust_string_to_c_char(error),
+    };
+
+    let template = match c_optional_string_to_option(c_template) {
+        Ok(value) => value,
+        Err(error) => return rust_string_to_c_char(error),
+    };
+
+    let language = match c_optional_string_to_option(c_language) {
+        Ok(value) => value,
+        Err(error) => return rust_string_to_c_char(error),
+    };
+
+    let separator = match c_optional_string_to_option(c_separator) {
+        Ok(value) => value,
+        Err(error) => return rust_string_to_c_char(error),
+    };
+
+    let format = match template {
+        Some(template) => TextFormat::Custom(template),
+        None => match TextFormat::parse(&format_name) {
+            Some(format) => format,
+            None => {
+                return rust_string_to_c_char(format!(
+                    "unknown text format '{}' (expected plain, markdown or telegram)",
+                    format_name
+                ));
+            }
+        },
+    };
+
+    let settings = TextSettings {
+        format,
+        language,
+        song_separator: separator,
+    };
+
+    let song = match import_song_from_file(&file_path) {
+        Ok(song) => song,
+        Err(error) => return rust_string_to_c_char(error.to_string()),
+    };
+
+    match text_from_song(&song, &settings) {
+        Ok(text) => rust_string_to_c_char(text),
+        Err(error) => rust_string_to_c_char(error.to_string()),
+    }
+}
+
+/// Exports a song as LilyPond source from a supported song file.
+#[unsafe(no_mangle)]
+pub extern "C" fn create_lilypond_from_file_c(
+    c_file_path: *const c_char,
+    c_paper_size: *const c_char,
+    c_layout_indent: *const c_char,
+) -> *const c_char {
+    let file_path = match c_string_to_rust(c_file_path) {
+        Ok(path) => path,
+        Err(error) => return rust_string_to_c_char(error),
+    };
+    let paper_size = match c_string_to_rust(c_paper_size) {
+        Ok(size) => size,
+        Err(error) => return rust_string_to_c_char(error),
+    };
+    let layout_indent = match c_string_to_rust(c_layout_indent) {
+        Ok(indent) => indent,
+        Err(error) => return rust_string_to_c_char(error),
+    };
+
+    let settings = LilypondSettings {
+        paper_size,
+        layout_indent,
+        ..LilypondSettings::default()
+    };
+
+    let song = match import_song_from_file(&file_path) {
+        Ok(song) => song,
+        Err(error) => return rust_string_to_c_char(error.to_string()),
+    };
+
+    match exporter::lilypond::lilypond_from_song(&song, &settings) {
+        Ok(output) => rust_string_to_c_char(output),
+        Err(error) => rust_string_to_c_char(error),
+    }
+}
+
+/// Exports a song as ABC notation from a supported song file.
+#[unsafe(no_mangle)]
+pub extern "C" fn create_abc_from_file_c(
+    c_file_path: *const c_char,
+    c_unit_note_length: *const c_char,
+    c_include_chords: c_int,
+    c_include_all_verses: c_int,
+) -> *const c_char {
+    let file_path = match c_string_to_rust(c_file_path) {
+        Ok(path) => path,
+        Err(error) => return rust_string_to_c_char(error),
+    };
+    let unit_note_length = match c_string_to_rust(c_unit_note_length) {
+        Ok(length) => length,
+        Err(error) => return rust_string_to_c_char(error),
+    };
+
+    let settings = AbcSettings {
+        unit_note_length,
+        include_chords: c_include_chords == 1,
+        include_all_verses: c_include_all_verses == 1,
+    };
+
+    let song = match import_song_from_file(&file_path) {
+        Ok(song) => song,
+        Err(error) => return rust_string_to_c_char(error.to_string()),
+    };
+
+    match exporter::abc::abc_from_song(&song, &settings) {
+        Ok(output) => rust_string_to_c_char(output),
+        Err(error) => rust_string_to_c_char(error),
+    }
+}
+
+/// Exports a song as `.song.yml` from a supported song file.
+#[unsafe(no_mangle)]
+pub extern "C" fn create_song_yml_from_file_c(c_file_path: *const c_char) -> *const c_char {
+    let file_path = match c_string_to_rust(c_file_path) {
+        Ok(path) => path,
+        Err(error) => return rust_string_to_c_char(error),
+    };
+
+    let song = match import_song_from_file(&file_path) {
+        Ok(song) => song,
+        Err(error) => return rust_string_to_c_char(error.to_string()),
+    };
+
+    match exporter::song_yml::song_yml_from_song(&song) {
+        Ok(output) => rust_string_to_c_char(output),
+        Err(error) => rust_string_to_c_char(error),
     }
 }
 
@@ -217,37 +400,46 @@ pub fn create_presentation_from_file(
     slides_from_file(file_path, &slide_settings)
 }
 
-fn c_string_to_rust(c_str: *const c_char) -> Option<String> {
+fn c_string_to_rust(c_str: *const c_char) -> Result<String, String> {
     if c_str.is_null() {
-        return None; // Handle null pointer
+        return Err("received null pointer where C string was expected".to_string());
     }
 
-    // Unsafe block, da wir mit rohen Zeigern arbeiten
     unsafe {
-        // Konvertiere *const char zu &CStr
         let cstr = CStr::from_ptr(c_str);
-        
-        // Konvertiere zu Rust-String (bei ungültigem UTF-8 gibt es Fehlerbehandlung)
         cstr.to_str()
-            .map(|s| s.to_string()) // Erfolgreiche Konvertierung zu String
-            .ok() // Fehlerbehandlung: None bei ungültigem UTF-8
+            .map(|s| s.to_string())
+            .map_err(|_| "received invalid UTF-8 input".to_string())
     }
 }
 
-fn rust_string_to_c_char(rust_str: String) -> Option<*const c_char> {
-    // Konvertiere Rust-String in CString
+fn c_optional_string_to_option(c_str: *const c_char) -> Result<Option<String>, String> {
+    if c_str.is_null() {
+        return Ok(None);
+    }
+    let value = c_string_to_rust(c_str)?;
+    if value.is_empty() {
+        Ok(None)
+    } else {
+        Ok(Some(value))
+    }
+}
+
+fn rust_string_to_c_char(rust_str: String) -> *const c_char {
     match CString::new(rust_str) {
-        Ok(c_string) => {
-            // Extrahiere den *const c_char Zeiger
-            let c_ptr = c_string.as_ptr();
-            // Wichtig: c_string bleibt hier im Scope, damit der Zeiger gültig bleibt
-            std::mem::forget(c_string); // Optional: Verhindert Drop, wenn der Zeiger länger leben soll
-            Some(c_ptr)
-        }
-        Err(_) => {
-            // Fehler: String enthält interne Nullbytes
-            None
-        }
+        Ok(c_string) => c_string.into_raw() as *const c_char,
+        Err(_) => std::ptr::null(),
+    }
+}
+
+/// Frees a C string returned by this library.
+#[unsafe(no_mangle)]
+pub extern "C" fn free_c_string(c_str: *mut c_char) {
+    if c_str.is_null() {
+        return;
+    }
+    unsafe {
+        drop(CString::from_raw(c_str));
     }
 }
 

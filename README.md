@@ -20,6 +20,7 @@ It is part of the effort to rewrite [Cantara](https://github.com/reckel-jm/canta
 | [docs/meta-information.md](docs/meta-information.md) | The meta information line on slides: template and placement |
 | [docs/complex-slides.md](docs/complex-slides.md) | Slides stacking notation and several languages |
 | [docs/text-export.md](docs/text-export.md) | Plain text, Markdown/Telegram markup, and exporting several songs |
+| [docs/c-api.md](docs/c-api.md) | C entrypoints matching the CLI export flows |
 
 ## Repository layout
 
