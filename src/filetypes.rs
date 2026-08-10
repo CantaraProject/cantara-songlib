@@ -7,6 +7,8 @@ pub enum FileType {
     CSSF,
     SongYaml,
     CCLISongselectFile,
+    /// A SongBeamer song file (`.sng`)
+    SongBeamer,
 }
 
 pub fn contains_song_structure(file_type: FileType) -> bool {
@@ -15,6 +17,7 @@ pub fn contains_song_structure(file_type: FileType) -> bool {
         FileType::CSSF => true,
         FileType::SongYaml => true,
         FileType::CCLISongselectFile => true,
+        FileType::SongBeamer => true,
     }
 }
 
@@ -24,6 +27,8 @@ pub fn conatains_presentation_order(file_type: FileType) -> bool {
         FileType::CSSF => true,
         FileType::SongYaml => false,
         FileType::CCLISongselectFile => false,
+        // Only if the file states a `#VerseOrder`, which most of them do.
+        FileType::SongBeamer => true,
     }
 }
 
@@ -34,6 +39,7 @@ pub fn get_file_type_by_file_ending(ending: &str) -> Option<FileType> {
         "song" => Some(FileType::ClassicSongFile),
         "song.yml" | "song.yaml" | "yml" | "yaml" => Some(FileType::SongYaml),
         "ccli" => Some(FileType::CCLISongselectFile),
+        "sng" => Some(FileType::SongBeamer),
         _ => None,
     }
 }
@@ -52,6 +58,7 @@ impl FileType {
     /// assert_eq!(FileType::from_path(Path::new("a.song.yml")), Some(FileType::SongYaml));
     /// assert_eq!(FileType::from_path(Path::new("a.song")), Some(FileType::ClassicSongFile));
     /// assert_eq!(FileType::from_path(Path::new("a.ccli")), Some(FileType::CCLISongselectFile));
+    /// assert_eq!(FileType::from_path(Path::new("a.sng")), Some(FileType::SongBeamer));
     /// assert_eq!(FileType::from_path(Path::new("a.txt")), None);
     /// ```
     pub fn from_path(path: &Path) -> Option<FileType> {
@@ -87,6 +94,8 @@ mod tests {
             ("Amazing Grace.song", Some(FileType::ClassicSongFile)),
             ("Amazing Grace.cssf", Some(FileType::CSSF)),
             ("Weiß ich den Weg auch nicht.ccli", Some(FileType::CCLISongselectFile)),
+            ("Amazing Grace.sng", Some(FileType::SongBeamer)),
+            ("AMAZING GRACE.SNG", Some(FileType::SongBeamer)),
             // Extensions are matched case-insensitively.
             ("SONG.CCLI", Some(FileType::CCLISongselectFile)),
             ("notes.txt", None),

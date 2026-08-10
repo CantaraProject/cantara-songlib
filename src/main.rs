@@ -5,6 +5,7 @@ use cantara_songlib::exporter::slides::chapters_from_songs;
 use cantara_songlib::exporter::text::{text_from_songs, TextFormat, TextSettings};
 use cantara_songlib::exporter::abc::AbcSettings;
 use cantara_songlib::exporter::lilypond::LilypondSettings;
+use cantara_songlib::exporter::songbeamer::SngExportSettings;
 use cantara_songlib::importer::import_song_from_file;
 use cantara_songlib::slides::{
     LanguageConfiguration, ShowMetaInformation, SlideElement, SlideSettings,
@@ -149,6 +150,20 @@ enum Commands {
     /// Writes the song in the `.song.yml` format, e.g. to convert a classic
     /// `.song` file into it
     SongYml,
+
+    /// Writes the song as a SongBeamer file (`.sng`)
+    Songbeamer {
+        /// The language codes to interleave, in order, e.g. "de,en". Defaults
+        /// to the languages the song carries.
+        #[arg(short, long, value_name = "LANGS", value_delimiter = ',')]
+        languages: Vec<String>,
+
+        /// Write the file here instead of to standard output. Use this when the
+        /// file is meant for SongBeamer: it writes UTF-8 with the byte order
+        /// mark the program needs to read umlauts correctly.
+        #[arg(short, long, value_name = "FILE")]
+        output: Option<PathBuf>,
+    },
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -298,10 +313,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             if warn_if_empty(&song, file) {
                 return Ok(());
             }
-            match exporter::lilypond::lilypond_from_song(&song, &settings) {
-                Ok(ly_output) => println!("{}", ly_output),
-                Err(e) => return Err(e.into()),
-            }
+            println!("{}", exporter::lilypond::lilypond_from_song(&song, &settings)?);
         }
 
         Commands::Abc {
@@ -337,6 +349,26 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let file = only(inputs(&cli.files)?)?;
             let song = import_song_from_file(file)?;
             print!("{}", exporter::song_yml::song_yml_from_song(&song)?);
+        }
+
+        Commands::Songbeamer { languages, output } => {
+            // One `.sng` file holds exactly one song.
+            let file = only(inputs(&cli.files)?)?;
+            let song = import_song_from_file(file)?;
+            let settings = SngExportSettings {
+                languages: languages.clone(),
+                ..SngExportSettings::default()
+            };
+
+            match output {
+                // SongBeamer identifies the encoding by the byte order mark, so
+                // a file meant for it is written as bytes rather than printed.
+                Some(path) => std::fs::write(
+                    path,
+                    exporter::songbeamer::sng_bytes_from_song(&song, &settings),
+                )?,
+                None => print!("{}", exporter::songbeamer::sng_from_song(&song, &settings)),
+            }
         }
     }
 
