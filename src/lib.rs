@@ -31,6 +31,7 @@ orders, several voices, multiple languages and metadata.
 - The Cantara classic song format (lyrics only), see [`importer::classic_song`].
 - The YAML song format (lyrics and scores), see [`importer::song_yml`].
 - CCLI SongSelect exports (lyrics only), see [`importer::ccli`].
+- SongBeamer song files (`.sng`, lyrics only), see [`importer::songbeamer`].
 - The cssf song format (lyrics and scores), see [`importer::cssf`]. (under construction)
 
 # Export formats
@@ -39,6 +40,7 @@ orders, several voices, multiple languages and metadata.
 - LilyPond sheet music, see [`exporter::lilypond`].
 - ABC notation, see [`exporter::abc`].
 - Plain text and templated markup, see [`exporter::text`].
+- SongBeamer song files (`.sng`), see [`exporter::songbeamer`].
 
 # Example
 
@@ -89,12 +91,16 @@ pub mod song;
 #[doc = include_str!("../docs/data-model.md")]
 #[doc = include_str!("../docs/abc-export.md")]
 #[doc = include_str!("../docs/ccli-import.md")]
+#[doc = include_str!("../docs/songbeamer.md")]
 #[doc = include_str!("../docs/meta-information.md")]
 #[doc = include_str!("../docs/complex-slides.md")]
 #[doc = include_str!("../docs/text-export.md")]
 pub struct DocumentationExamples;
 
 pub mod importer;
+
+/// A minimal base64 codec, used by the SongBeamer formats
+pub mod base64;
 
 /// The filetypes which are supported as input/output
 pub mod filetypes;

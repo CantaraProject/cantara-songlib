@@ -12,6 +12,8 @@ pub mod song_yml;
 
 pub mod ccli;
 
+pub mod songbeamer;
+
 pub mod metadata;
 
 use errors::CantaraFileDoesNotExistError;
@@ -80,6 +82,7 @@ pub enum SongFileParsingState {
 /// | `.song.yml`, `.song.yaml`, `.yml`, `.yaml` | the YAML song format |
 /// | `.ccli` | a CCLI SongSelect export |
 /// | `.cssf` | Cantara Structured Song Format (under construction) |
+/// | `.sng` | a SongBeamer song file |
 ///
 /// A song whose file contains no title of its own is titled after the file.
 ///
@@ -99,6 +102,13 @@ pub fn import_song_from_file(file_path: impl AsRef<Path>) -> Result<Song, Box<dy
         })
     })?;
 
+    // SongBeamer files are not necessarily UTF-8 — they carry their encoding in
+    // a byte order mark — so they are read as bytes and decoded by their own
+    // importer.
+    if file_type == FileType::SongBeamer {
+        return songbeamer::import_from_file(path);
+    }
+
     let content = std::fs::read_to_string(path)?;
 
     let mut song = match file_type {
@@ -112,6 +122,8 @@ pub fn import_song_from_file(file_path: impl AsRef<Path>) -> Result<Song, Box<dy
                 .unwrap_or("")
                 .to_string(),
         )?,
+        // Handled above: this format is read from bytes rather than from text.
+        FileType::SongBeamer => unreachable!(),
     };
 
     // Formats that carry no title fall back to the file name.
