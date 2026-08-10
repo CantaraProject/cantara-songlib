@@ -356,7 +356,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let file = only(inputs(&cli.files)?)?;
             let song = import_song_from_file(file)?;
             let settings = SngExportSettings {
-                languages: languages.clone(),
+                languages: languages
+                    .iter()
+                    .map(|l| l.trim().to_string())
+                    .filter(|l| !l.is_empty())
+                    .collect(),
                 ..SngExportSettings::default()
             };
 
