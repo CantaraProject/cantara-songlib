@@ -45,6 +45,8 @@ pub enum SlideContent {
     Empty(EmptySlide),
     /// A slide that displays a single page from a PDF document
     PdfPage(PdfPageSlide),
+    /// A slide that plays a video
+    Video(VideoSlide),
 }
 
 /// A struct which represents a presented slide
@@ -94,6 +96,24 @@ impl Slide {
             slide_content: SlideContent::PdfPage(PdfPageSlide {
                 pdf_path,
                 page_number,
+            }),
+            linked_file: None,
+        }
+    }
+
+    /// A slide that plays a video.
+    ///
+    /// How it is played travels with the slide rather than being looked up
+    /// again where it is drawn: the same slide is shown by the projection, by
+    /// the presenter console and by every phone the presentation is streamed
+    /// to, and all of them have to agree on whether it starts by itself and
+    /// whether it repeats.
+    pub fn new_video_slide(video_path: String, autostart: bool, looping: bool) -> Self {
+        Slide {
+            slide_content: SlideContent::Video(VideoSlide {
+                video_path,
+                autostart,
+                looping,
             }),
             linked_file: None,
         }
@@ -174,6 +194,7 @@ impl Slide {
             SlideContent::SimplePicture(_) => false,
             SlideContent::Empty(_) => false,
             SlideContent::PdfPage(_) => false,
+            SlideContent::Video(_) => false,
         }
     }
 
@@ -190,6 +211,7 @@ impl Slide {
             SlideContent::SimplePicture(_) => false,
             SlideContent::Empty(_) => false,
             SlideContent::PdfPage(_) => false,
+            SlideContent::Video(_) => false,
         }
     }
 }
@@ -273,6 +295,29 @@ pub struct PdfPageSlide {
     pub pdf_path: String,
     /// The page number to display (1-based)
     pub page_number: u32,
+}
+
+/// A slide that plays a video.
+///
+/// The slide says which video and how it is meant to be played; it says nothing
+/// about how far into it the presentation currently is. That is not a property
+/// of the slide but of the moment, it changes many times a second, and it has
+/// to be the same in every window and on every device showing the
+/// presentation — so it belongs with whatever is running the presentation, not
+/// here.
+///
+/// The fields are public, as [`PdfPageSlide`]'s are: everything about a video
+/// slide is addressing and instruction, with no invariant between the parts to
+/// protect.
+#[derive(Clone, Serialize, Deserialize, PartialEq, Debug)]
+pub struct VideoSlide {
+    /// The path to the video file.
+    pub video_path: String,
+    /// Whether the video starts as soon as the slide is shown, rather than
+    /// waiting to be started.
+    pub autostart: bool,
+    /// Whether the video begins again when it reaches the end.
+    pub looping: bool,
 }
 
 /// A slide that stacks several representations of the same passage: the
@@ -1004,6 +1049,49 @@ mod tests {
         assert_eq!(wrapped_multiple[1][1], vec!["B3".to_string(), "B4".to_string()]);
     }
     
+    /// A video slide carries where the video is and how it is meant to be
+    /// played, and nothing about where the playback currently stands — that is
+    /// a property of the moment rather than of the slide, and every window and
+    /// device showing the presentation has to agree on it.
+    #[test]
+    fn test_a_video_slide_carries_its_path_and_its_playback_settings() {
+        let slide = Slide::new_video_slide("/library/intro.mp4".to_string(), true, false);
+
+        match slide.slide_content {
+            SlideContent::Video(video) => {
+                assert_eq!(video.video_path, "/library/intro.mp4");
+                assert!(video.autostart);
+                assert!(!video.looping);
+            }
+            other => panic!("expected a video slide, got {other:?}"),
+        }
+    }
+
+    /// It survives being written out and read back. The slide travels to the
+    /// presenter console, to a saved running order and over the wire to every
+    /// phone the presentation is streamed to, and all of those are this
+    /// round trip.
+    #[test]
+    fn test_a_video_slide_survives_serialisation() {
+        let slide = Slide::new_video_slide("/library/outro.webm".to_string(), false, true);
+
+        let written = serde_json::to_string(&slide).expect("a video slide can be written out");
+        let read: Slide = serde_json::from_str(&written).expect("and read back");
+
+        assert_eq!(read, slide);
+    }
+
+    /// A video has neither a spoiler nor a meta line: there is no text on it to
+    /// carry either, and a renderer that thought otherwise would draw an empty
+    /// band across the picture.
+    #[test]
+    fn test_a_video_slide_has_neither_spoiler_nor_meta_text() {
+        let slide = Slide::new_video_slide("/library/intro.mp4".to_string(), true, true);
+
+        assert!(!slide.has_spoiler());
+        assert!(!slide.has_meta_text());
+    }
+
     #[test]
     fn test_wrap_blocks_edge_cases() {
         // Test with maximum_lines = 1 (extreme case)
