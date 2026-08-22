@@ -718,7 +718,7 @@ fn test_meta_information_follows_the_usual_settings() {
         (ShowMetaInformation::title_slide(), vec![0]),
         (ShowMetaInformation::first_slide(), vec![1]),
         (ShowMetaInformation::last_slide(), vec![2]),
-        (ShowMetaInformation::all(), vec![0, 1, 2]),
+        (ShowMetaInformation::title_first_slide_last_slide(), vec![0, 1, 2]),
     ];
 
     for (show, expected) in cases {

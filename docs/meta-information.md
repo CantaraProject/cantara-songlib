@@ -104,20 +104,22 @@ let show = ShowMetaInformation {
     title_slide: true,
     first_slide: false,
     last_slide: true,
+    all_slides: false,
 };
 assert!(show.on_title_slide());
 ```
 
-| Constructor | Title slide | First content slide | Last content slide |
-|-------------|:-----------:|:-------------------:|:------------------:|
-| `none()` | | | |
-| `title_slide()` | ● | | |
-| `first_slide()` | | ● | |
-| `last_slide()` | | | ● |
-| `first_and_last_slide()` | | ● | ● |
-| `all()` | ● | ● | ● |
+| Constructor | Title slide | First content slide | Last content slide | Other slides |
+|-------------|:-----------:|:-------------------:|:------------------:|:------------:|
+| `none()` | | | |              |
+| `title_slide()` | ● | | |              |
+| `first_slide()` | | ● | |              |
+| `last_slide()` | | | ● |              |
+| `first_and_last_slide()` | | ● | ● |              |
+| `title_first_slide_last_slide()` | ● | ● | ● |              |
+| `all_slides()` | ● | ● | ● |        ●        |
 
-Two details worth knowing:
+Two details are worth knowing:
 
 * The **title slide is its own position**. Asking for the metadata on the
   content slides leaves the title slide clean, and the other way round.

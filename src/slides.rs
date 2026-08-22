@@ -557,7 +557,7 @@ impl Default for SlideSettings {
         SlideSettings {
             title_slide: true,
             meta_syntax: "".to_string(),
-            show_meta_information: ShowMetaInformation::all(),
+            show_meta_information: ShowMetaInformation::title_first_slide_last_slide(),
             empty_last_slide: true,
             show_spoiler: true,
             max_lines: None,
@@ -584,6 +584,7 @@ impl Default for SlideSettings {
 ///     title_slide: true,
 ///     first_slide: false,
 ///     last_slide: true,
+///     all_slides: true,
 /// };
 /// assert!(custom.on_title_slide());
 /// ```
@@ -595,6 +596,8 @@ pub struct ShowMetaInformation {
     pub first_slide: bool,
     /// Show it on the last content slide.
     pub last_slide: bool,
+    /// Show meta information on all slides
+    pub all_slides: bool,
 }
 
 impl ShowMetaInformation {
@@ -633,12 +636,23 @@ impl ShowMetaInformation {
             title_slide: false,
             first_slide: true,
             last_slide: true,
+            all_slides: false,
         }
     }
 
     /// Show it on the title slide and on the first and last content slide.
-    pub fn all() -> Self {
+    pub fn title_first_slide_last_slide() -> Self {
         ShowMetaInformation {
+            title_slide: true,
+            first_slide: true,
+            last_slide: true,
+            all_slides: false,
+        }
+    }
+
+    pub fn all_slides() -> Self {
+        ShowMetaInformation {
+            all_slides: true,
             title_slide: true,
             first_slide: true,
             last_slide: true,
@@ -647,22 +661,22 @@ impl ShowMetaInformation {
 
     /// Whether anything is shown at all.
     pub fn is_none(&self) -> bool {
-        !self.title_slide && !self.first_slide && !self.last_slide
+        !self.title_slide && !self.first_slide && !self.last_slide && !self.all_slides
     }
 
     /// Whether the title slide shows the meta information.
     pub fn on_title_slide(&self) -> bool {
-        self.title_slide
+        self.title_slide || self.all_slides
     }
 
     /// Whether the first content slide shows the meta information.
     pub fn on_first_slide(&self) -> bool {
-        self.first_slide
+        self.first_slide || self.all_slides
     }
 
     /// Whether the last content slide shows the meta information.
     pub fn on_last_slide(&self) -> bool {
-        self.last_slide
+        self.last_slide || self.all_slides
     }
 
     /// Whether the content slide at `index` out of `count` shows it.
@@ -684,6 +698,9 @@ impl ShowMetaInformation {
         if count == 0 {
             return false;
         }
+        if self.all_slides {
+            return true;
+        }
         (self.first_slide && index == 0) || (self.last_slide && index + 1 == count)
     }
 
@@ -701,13 +718,15 @@ impl ShowMetaInformation {
     /// assert_eq!(ShowMetaInformation::from_bits(2), ShowMetaInformation::last_slide());
     /// assert_eq!(ShowMetaInformation::from_bits(3), ShowMetaInformation::first_and_last_slide());
     /// assert_eq!(ShowMetaInformation::from_bits(4), ShowMetaInformation::title_slide());
-    /// assert_eq!(ShowMetaInformation::from_bits(7), ShowMetaInformation::all());
+    /// assert_eq!(ShowMetaInformation::from_bits(7), ShowMetaInformation::title_first_slide_last_slide());
+    /// assert_eq!(ShowMetaInformation::from_bits(8), ShowMetaInformation::all_slides());
     /// ```
     pub fn from_bits(bits: u8) -> Self {
         ShowMetaInformation {
             first_slide: bits & 0b001 != 0,
             last_slide: bits & 0b010 != 0,
             title_slide: bits & 0b100 != 0,
+            all_slides: bits & 0b111 != 0,
         }
     }
 
