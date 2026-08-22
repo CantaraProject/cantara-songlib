@@ -679,10 +679,10 @@ impl ShowMetaInformation {
         self.last_slide || self.all_slides
     }
 
-    /// Whether the content slide at `index` out of `count` shows it.
+    /// Function to decide whether the content slide at `index` out of `count` should render meta-information
+    /// according to the settings in `self`.
     ///
-    /// A song with a single content slide has that slide be both the first and
-    /// the last, so it shows the metadata if either position is selected.
+    /// This function should be called when generating slides to decide whether to put meta-information on it.
     ///
     /// ```
     /// use cantara_songlib::slides::ShowMetaInformation;
@@ -693,6 +693,12 @@ impl ShowMetaInformation {
     ///
     /// // The only slide of a song counts as the last one.
     /// assert!(last_only.on_content_slide(0, 1));
+    ///
+    /// // When `all_slides` is set to `true`, every slide should contain meta-information.
+    /// let all_slides = ShowMetaInformation::all_slides();
+    /// assert!(all_slides.on_content_slide(0, 3));
+    /// assert!(all_slides.on_content_slide(1, 3));
+    /// assert!(all_slides.on_content_slide(2, 3));
     /// ```
     pub fn on_content_slide(&self, index: usize, count: usize) -> bool {
         if count == 0 {
