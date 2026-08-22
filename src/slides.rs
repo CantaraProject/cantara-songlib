@@ -719,14 +719,14 @@ impl ShowMetaInformation {
     /// assert_eq!(ShowMetaInformation::from_bits(3), ShowMetaInformation::first_and_last_slide());
     /// assert_eq!(ShowMetaInformation::from_bits(4), ShowMetaInformation::title_slide());
     /// assert_eq!(ShowMetaInformation::from_bits(7), ShowMetaInformation::title_first_slide_last_slide());
-    /// assert_eq!(ShowMetaInformation::from_bits(8), ShowMetaInformation::all_slides());
+    /// assert_eq!(ShowMetaInformation::from_bits(15), ShowMetaInformation::all_slides());
     /// ```
     pub fn from_bits(bits: u8) -> Self {
         ShowMetaInformation {
             first_slide: bits & 0b001 != 0,
             last_slide: bits & 0b010 != 0,
             title_slide: bits & 0b100 != 0,
-            all_slides: bits & 0b111 != 0,
+            all_slides: bits & 0b1000 != 0,
         }
     }
 
