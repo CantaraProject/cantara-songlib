@@ -1063,15 +1063,16 @@ Refrain B.";
         }
     }
 
-    /// `max_lines` has to count the lines that actually reach the slide.
+    /// A block over the limit is split into even halves, all the way through
+    /// the importer: four-line verses under a limit of three become 2+2, not
+    /// 3+1. See `wrap_blocks` for the rule.
     ///
-    /// The blocks used to be built with a leading empty line, which
-    /// `wrap_blocks` counted against the limit even though
-    /// `Slide::new_content_slide` trims it away again. That cost every block's
-    /// first chunk one line: these four-line verses came out as 2+2 under a
-    /// limit of three instead of filling the limit at 3+1.
+    /// That the limit counts only the lines which actually reach the slide —
+    /// the blocks used to carry a leading empty line that
+    /// `Slide::new_content_slide` trims away again — is pinned by
+    /// `test_block_of_exactly_max_lines_is_not_wrapped`.
     #[test]
-    fn test_max_lines_is_not_spent_on_a_leading_empty_line() {
+    fn test_blocks_over_the_limit_are_split_evenly() {
         let testfile =
             std::fs::read_to_string("tests/data/O What A Savior That He Died For Me.song").unwrap();
 
@@ -1090,8 +1091,8 @@ Refrain B.";
         );
         assert_eq!(
             main_text_line_counts(&wrapped),
-            [3, 1].repeat(8),
-            "a four-line block under a limit of three must fill the first slide"
+            [2, 2].repeat(8),
+            "a four-line block under a limit of three has to be halved"
         );
     }
 
@@ -1153,33 +1154,41 @@ Refrain B.";
                     vec![
                         "Main verse one line one".to_string(),
                         "Main verse one line two".to_string(),
-                        "Main verse one line three".to_string(),
                     ],
                     vec![
                         "Neben Strophe eins Zeile eins".to_string(),
                         "Neben Strophe eins Zeile zwei".to_string(),
-                        "Neben Strophe eins Zeile drei".to_string(),
                     ],
                 ),
                 (
-                    vec!["Main verse one line four".to_string()],
-                    vec!["Neben Strophe eins Zeile vier".to_string()],
+                    vec![
+                        "Main verse one line three".to_string(),
+                        "Main verse one line four".to_string(),
+                    ],
+                    vec![
+                        "Neben Strophe eins Zeile drei".to_string(),
+                        "Neben Strophe eins Zeile vier".to_string(),
+                    ],
                 ),
                 (
                     vec![
                         "Main verse two line one".to_string(),
                         "Main verse two line two".to_string(),
-                        "Main verse two line three".to_string(),
                     ],
                     vec![
                         "Neben Strophe zwei Zeile eins".to_string(),
                         "Neben Strophe zwei Zeile zwei".to_string(),
-                        "Neben Strophe zwei Zeile drei".to_string(),
                     ],
                 ),
                 (
-                    vec!["Main verse two line four".to_string()],
-                    vec!["Neben Strophe zwei Zeile vier".to_string()],
+                    vec![
+                        "Main verse two line three".to_string(),
+                        "Main verse two line four".to_string(),
+                    ],
+                    vec![
+                        "Neben Strophe zwei Zeile drei".to_string(),
+                        "Neben Strophe zwei Zeile vier".to_string(),
+                    ],
                 ),
             ],
         );
