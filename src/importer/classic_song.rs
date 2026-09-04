@@ -891,7 +891,7 @@ Refrain B.";
         let presentation_settings = SlideSettings {
             title_slide: true,
             meta_syntax: "{{title}} ({{author}})".to_string(),
-            show_meta_information: ShowMetaInformation::all(),
+            show_meta_information: ShowMetaInformation::title_first_slide_last_slide(),
             empty_last_slide: true,
             show_spoiler: true ,
             max_lines: Some(10),

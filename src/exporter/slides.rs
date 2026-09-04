@@ -794,7 +794,9 @@ mod tests {
             (ShowMetaInformation::first_slide(), vec![1]),
             (ShowMetaInformation::last_slide(), vec![3]),
             (ShowMetaInformation::first_and_last_slide(), vec![1, 3]),
-            (ShowMetaInformation::all(), vec![0, 1, 3]),
+            (ShowMetaInformation::title_first_slide_last_slide(), vec![0, 1, 3]),
+            // `all_slides` also covers the middle content slide (index 2).
+            (ShowMetaInformation::all_slides(), vec![0, 1, 2, 3]),
         ];
 
         for (show, expected) in cases {
@@ -850,7 +852,7 @@ mod tests {
         let song = song_with_metadata();
         let settings = SlideSettings {
             meta_syntax: String::new(),
-            ..settings_with(ShowMetaInformation::all())
+            ..settings_with(ShowMetaInformation::title_first_slide_last_slide())
         };
         assert!(slides_with_meta(&song, &settings).is_empty());
     }
@@ -864,7 +866,7 @@ mod tests {
 
         let settings = SlideSettings {
             meta_syntax: "{{author}}".to_string(),
-            ..settings_with(ShowMetaInformation::all())
+            ..settings_with(ShowMetaInformation::title_first_slide_last_slide())
         };
         assert!(slides_with_meta(&song, &settings).is_empty());
     }
@@ -877,7 +879,7 @@ mod tests {
         let song = song_with_metadata();
         let settings = SlideSettings {
             meta_syntax: "{{#if author}}never closed".to_string(),
-            ..settings_with(ShowMetaInformation::all())
+            ..settings_with(ShowMetaInformation::title_first_slide_last_slide())
         };
 
         let slides = slides_from_song(&song, &settings);
@@ -906,7 +908,7 @@ mod tests {
 
         let settings = SlideSettings {
             language: LanguageConfiguration::MultiLanguage(vec![]),
-            ..settings_with(ShowMetaInformation::all())
+            ..settings_with(ShowMetaInformation::title_first_slide_last_slide())
         };
 
         // slides: 0 = title, 1 = verse one, 2 = verse two.
