@@ -776,7 +776,8 @@ impl ShowMetaInformation {
 /// # Arguments
 /// - `blocks`: the groups to wrap; every group has to hold the same number of
 ///   blocks
-/// - `maximum_lines`: the most lines a block may have
+/// - `maximum_lines`: the most lines a block may have; `0` means "no limit"
+///   and returns the blocks unchanged
 /// - `persistence`: whether the original block breaks are preserved
 ///   (recommended)
 ///
@@ -799,6 +800,14 @@ pub fn wrap_blocks(
         if group.len() != first_block_length {
             panic!("The length of every block has to be equal.")
         }
+    }
+
+    // A limit of zero cannot be met by any block that holds a line, so it is
+    // read as "do not wrap at all" rather than as an impossible limit. The
+    // setting comes from `SlideSettings.max_lines` as a plain `usize`, so it
+    // can reach us as `0` without anything upstream having validated it.
+    if maximum_lines == 0 {
+        return blocks.to_vec();
     }
 
     let mut wrapped_blocks = blocks.to_vec();
@@ -1052,6 +1061,24 @@ mod tests {
 
         assert_eq!(wrapped[0], vec![vec!["A1", "A2", "A3"], vec!["A4", "A5"]]);
         assert_eq!(wrapped[1], vec![vec!["B1", "B2", "B3"], vec!["B4", "B5"]]);
+    }
+
+    /// A limit of zero means "do not wrap". No block can hold fewer than one
+    /// line, so treating it as a real limit would either divide by zero or
+    /// split forever.
+    #[test]
+    fn test_wrap_blocks_without_a_limit() {
+        assert_eq!(
+            wrap_single(&["A", "B", "C", "D", "E"], 0),
+            vec![vec!["A", "B", "C", "D", "E"]]
+        );
+
+        let groups = vec![
+            vec![vec!["A1".to_string(), "A2".to_string()]],
+            vec![vec!["B1".to_string(), "B2".to_string()]],
+        ];
+        assert_eq!(wrap_blocks(&groups, 0, true), groups);
+        assert_eq!(wrap_blocks(&groups, 0, false), groups);
     }
 
     #[test]
