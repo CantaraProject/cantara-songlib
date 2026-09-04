@@ -761,6 +761,13 @@ impl ShowMetaInformation {
 
 /// Wrap blocks so that none of them exceeds `maximum_lines` lines.
 ///
+/// A block that is too long is cut into the smallest number of parts that stay
+/// within the limit, and those parts are made as equal in length as possible
+/// rather than filling each one up to `maximum_lines`. Ten lines with a limit
+/// of seven become 5 | 5, not 7 | 3; five lines with a limit of four become
+/// 3 | 2, not 4 | 1. If the lines do not divide evenly, the earlier parts are
+/// the longer ones.
+///
 /// Several groups of blocks can be wrapped at once — the slide exporters use
 /// that to keep the lyrics of different languages in step with each other. All
 /// groups are cut at the same places, so line *i* of one group still belongs
@@ -805,8 +812,18 @@ pub fn wrap_blocks(
             continue;
         }
         if wrapped_blocks[0][block_index].len() > maximum_lines {
-            // The first part takes as many lines as it is allowed to.
-            let target_first_len = maximum_lines;
+            // Spread the lines evenly instead of filling the first part up to
+            // the limit: a block is cut into the smallest number of parts that
+            // still respect `maximum_lines`, and those parts are kept as equal
+            // in size as possible. Five lines with a limit of four become
+            // 3 | 2 rather than 4 | 1.
+            //
+            // Only the size of the *first* part is decided here — the overflow
+            // ends up in a fresh block which this loop visits next, so applying
+            // the same rule again distributes the rest evenly as well.
+            let line_count = wrapped_blocks[0][block_index].len();
+            let part_count = line_count.div_ceil(maximum_lines);
+            let target_first_len = line_count.div_ceil(part_count);
 
             let has_next = wrapped_blocks[0].get(block_index + 1).is_some();
 
@@ -964,6 +981,79 @@ mod tests {
         assert_eq!(wrapped_blocks[0][1], vec!["L4".to_string(), "L5".to_string()]);
     }
     
+    /// The parts of a wrapped block, as their lines, for the balancing tests.
+    fn wrap_single(lines: &[&str], maximum_lines: usize) -> Vec<Vec<String>> {
+        let block: Vec<Vec<String>> =
+            vec![lines.iter().map(|line| line.to_string()).collect()];
+        wrap_blocks(&[block], maximum_lines, true).remove(0)
+    }
+
+    /// A block is split into even parts, not into "as much as allowed" plus a
+    /// short remainder.
+    #[test]
+    fn test_wrap_blocks_splits_evenly() {
+        // Five lines with a limit of four: 3 | 2 instead of 4 | 1.
+        assert_eq!(
+            wrap_single(&["A", "B", "C", "D", "E"], 4),
+            vec![vec!["A", "B", "C"], vec!["D", "E"]]
+        );
+
+        // Ten lines with a limit of seven: 5 | 5 instead of 7 | 3.
+        assert_eq!(
+            wrap_single(&["A", "B", "C", "D", "E", "F", "G", "H", "I", "J"], 7),
+            vec![vec!["A", "B", "C", "D", "E"], vec!["F", "G", "H", "I", "J"]]
+        );
+    }
+
+    /// With more than two parts the lines stay balanced as well, and the longer
+    /// parts come first.
+    #[test]
+    fn test_wrap_blocks_splits_evenly_over_several_parts() {
+        // Ten lines with a limit of three need four parts: 3 | 3 | 2 | 2.
+        assert_eq!(
+            wrap_single(&["A", "B", "C", "D", "E", "F", "G", "H", "I", "J"], 3),
+            vec![
+                vec!["A", "B", "C"],
+                vec!["D", "E", "F"],
+                vec!["G", "H"],
+                vec!["I", "J"],
+            ]
+        );
+
+        // Nine lines with a limit of four need three parts of exactly three.
+        assert_eq!(
+            wrap_single(&["A", "B", "C", "D", "E", "F", "G", "H", "I"], 4),
+            vec![vec!["A", "B", "C"], vec!["D", "E", "F"], vec!["G", "H", "I"]]
+        );
+    }
+
+    /// Parallel groups are cut at the same places as the primary one, so the
+    /// even split must not pull the languages out of step.
+    #[test]
+    fn test_wrap_blocks_splits_evenly_across_groups() {
+        let groups = vec![
+            vec![vec![
+                "A1".to_string(),
+                "A2".to_string(),
+                "A3".to_string(),
+                "A4".to_string(),
+                "A5".to_string(),
+            ]],
+            vec![vec![
+                "B1".to_string(),
+                "B2".to_string(),
+                "B3".to_string(),
+                "B4".to_string(),
+                "B5".to_string(),
+            ]],
+        ];
+
+        let wrapped = wrap_blocks(&groups, 4, true);
+
+        assert_eq!(wrapped[0], vec![vec!["A1", "A2", "A3"], vec!["A4", "A5"]]);
+        assert_eq!(wrapped[1], vec![vec!["B1", "B2", "B3"], vec!["B4", "B5"]]);
+    }
+
     #[test]
     fn test_wrap_blocks_empty() {
         // Test with empty blocks
