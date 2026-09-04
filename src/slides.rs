@@ -584,9 +584,14 @@ impl Default for SlideSettings {
 ///     title_slide: true,
 ///     first_slide: false,
 ///     last_slide: true,
-///     all_slides: true,
+///     all_slides: false,
 /// };
 /// assert!(custom.on_title_slide());
+/// assert!(!custom.on_first_slide());
+/// assert!(custom.on_last_slide());
+///
+/// // `all_slides` is a shortcut which overrides the individual positions.
+/// assert!(ShowMetaInformation::all_slides().on_first_slide());
 /// ```
 #[derive(Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Debug, Default)]
 pub struct ShowMetaInformation {
@@ -597,6 +602,7 @@ pub struct ShowMetaInformation {
     /// Show it on the last content slide.
     pub last_slide: bool,
     /// Show meta information on all slides
+    #[serde(default)]
     pub all_slides: bool,
 }
 
@@ -737,8 +743,19 @@ impl ShowMetaInformation {
     }
 
     /// The inverse of [`ShowMetaInformation::from_bits`].
+    ///
+    /// ```
+    /// use cantara_songlib::slides::ShowMetaInformation;
+    ///
+    /// for bits in 0..16u8 {
+    ///     assert_eq!(ShowMetaInformation::from_bits(bits).to_bits(), bits);
+    /// }
+    /// ```
     pub fn to_bits(&self) -> u8 {
-        (self.first_slide as u8) | ((self.last_slide as u8) << 1) | ((self.title_slide as u8) << 2)
+        (self.first_slide as u8)
+            | ((self.last_slide as u8) << 1)
+            | ((self.title_slide as u8) << 2)
+            | ((self.all_slides as u8) << 3)
     }
 }
 

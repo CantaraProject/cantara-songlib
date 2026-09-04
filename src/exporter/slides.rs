@@ -795,6 +795,8 @@ mod tests {
             (ShowMetaInformation::last_slide(), vec![3]),
             (ShowMetaInformation::first_and_last_slide(), vec![1, 3]),
             (ShowMetaInformation::title_first_slide_last_slide(), vec![0, 1, 3]),
+            // `all_slides` also covers the middle content slide (index 2).
+            (ShowMetaInformation::all_slides(), vec![0, 1, 2, 3]),
         ];
 
         for (show, expected) in cases {
