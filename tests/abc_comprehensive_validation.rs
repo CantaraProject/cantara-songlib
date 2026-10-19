@@ -9,9 +9,11 @@ use cantara_songlib::exporter::abc::{abc_from_song, AbcSettings};
 use cantara_songlib::importer::song_yml;
 use cantara_songlib::song::Song;
 
-const TEST_FILES: [&str; 2] = [
+const TEST_FILES: [&str; 3] = [
     "tests/data/Amazing Grace.song.yml",
     "tests/data/Sei nicht stolz auf das, was du bist.song.yml",
+    // Carries a chord line, so the chord annotations are validated too.
+    "tests/data/Tochter Zion.song.yml",
 ];
 
 fn load(path: &str) -> Song {

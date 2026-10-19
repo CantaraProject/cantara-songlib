@@ -1,12 +1,15 @@
 //! This crate also provides a very small wrapper cli for directly converting and parsing song files.
 
 use cantara_songlib::exporter;
-use cantara_songlib::exporter::slides::chapters_from_songs;
+use cantara_songlib::exporter::slides::{chapters_from_songs, slides_from_song};
 use cantara_songlib::exporter::text::{text_from_songs, TextFormat, TextSettings};
 use cantara_songlib::exporter::abc::AbcSettings;
 use cantara_songlib::exporter::lilypond::LilypondSettings;
 use cantara_songlib::exporter::songbeamer::SngExportSettings;
 use cantara_songlib::importer::import_song_from_file;
+use cantara_songlib::music::TransposeDirection;
+use cantara_songlib::song::Song;
+use cantara_songlib::transpose::transpose_song;
 use cantara_songlib::slides::{
     LanguageConfiguration, ShowMetaInformation, SlideElement, SlideSettings,
 };
@@ -27,6 +30,45 @@ struct Cli {
     /// accept several; `lilypond` takes exactly one.
     #[arg(global = true)]
     files: Vec<PathBuf>,
+
+    /// Transpose into this key before exporting, e.g. "F", "Eb", "f# minor".
+    /// The song has to say which key it is in.
+    #[arg(long, global = true, value_name = "KEY")]
+    transpose: Option<String>,
+
+    /// Which way to transpose. The target key alone is ambiguous: from D major
+    /// to F major is a minor third up or a major sixth down.
+    #[arg(
+        long,
+        global = true,
+        value_name = "DIRECTION",
+        default_value = "nearest",
+        value_enum,
+        requires = "transpose"
+    )]
+    transpose_direction: Direction,
+}
+
+/// Which way `--transpose` moves the music. Maps onto
+/// [`TransposeDirection`].
+#[derive(Copy, Clone, PartialEq, Eq, clap::ValueEnum)]
+enum Direction {
+    /// Raise the music to the next occurrence of the target key
+    Up,
+    /// Lower the music to the previous occurrence of the target key
+    Down,
+    /// Move the music as little as possible, up or down
+    Nearest,
+}
+
+impl From<Direction> for TransposeDirection {
+    fn from(direction: Direction) -> TransposeDirection {
+        match direction {
+            Direction::Up => TransposeDirection::Up,
+            Direction::Down => TransposeDirection::Down,
+            Direction::Nearest => TransposeDirection::Nearest,
+        }
+    }
 }
 
 /// Where the meta information line may appear, as selectable on the command
@@ -99,6 +141,10 @@ enum Commands {
         /// one input file is given.
         #[arg(long)]
         chapters: bool,
+
+        /// Print chord symbols above the staff of a notation row
+        #[arg(long, default_value = "true", action = clap::ArgAction::Set)]
+        include_chords: bool,
     },
 
     /// Writes the lyrics as plain text or in a markup of your choosing
@@ -130,6 +176,10 @@ enum Commands {
         /// Layout indent setting (default: "#0")
         #[arg(short, long, default_value = "#0")]
         indent: String,
+
+        /// Print chord symbols above the staff
+        #[arg(long, default_value = "true", action = clap::ArgAction::Set)]
+        include_chords: bool,
     },
 
     /// Generates an ABC notation (.abc) music file
@@ -168,6 +218,22 @@ enum Commands {
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
+
+    // Read a song file and transpose it if `--transpose` was given. Every
+    // command loads its songs through here, so a presentation, a lead sheet
+    // and a `.sng` file all come out in the same key.
+    let load = |file: &PathBuf| -> Result<Song, Box<dyn std::error::Error>> {
+        let song = import_song_from_file(file)?;
+        match &cli.transpose {
+            Some(key) => Ok(transpose_song(
+                &song,
+                key,
+                cli.transpose_direction.into(),
+            )
+            .map_err(|error| format!("cannot transpose '{}': {}", file.display(), error))?),
+            None => Ok(song),
+        }
+    };
 
     /// Check that every input exists before doing any work.
     fn inputs(files: &[PathBuf]) -> Result<&[PathBuf], Box<dyn std::error::Error>> {
@@ -233,6 +299,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             meta_syntax,
             show_meta,
             no_title_slide,
+            include_chords,
         } => {
             let files = inputs(&cli.files)?;
             let lang_config = if !show.is_empty() {
@@ -262,15 +329,22 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 title_slide: !no_title_slide,
                 meta_syntax: meta_syntax.clone(),
                 show_meta_information: MetaPosition::to_settings(show_meta),
+                show_chords: *include_chords,
                 ..SlideSettings::default()
             };
 
             // Several songs — or an explicit request — are grouped into
             // chapters so that a presentation can tell them apart.
             if files.len() > 1 || *chapters {
-                let songs: Result<Vec<_>, _> = files.iter().map(import_song_from_file).collect();
-                let chapters = chapters_from_songs(&songs?, &settings);
+                let songs: Vec<Song> = files
+                    .iter()
+                    .map(&load)
+                    .collect::<Result<Vec<Song>, _>>()?;
+                let chapters = chapters_from_songs(&songs, &settings);
                 println!("{}", serde_json::to_string_pretty(&chapters)?);
+            } else if cli.transpose.is_some() {
+                let slides = slides_from_song(&load(only(files)?)?, &settings);
+                println!("{}", serde_json::to_string_pretty(&slides)?);
             } else {
                 let slides = slides_from_file(only(files)?, &settings)?;
                 println!("{}", serde_json::to_string_pretty(&slides)?);
@@ -293,19 +367,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 song_separator: separator.clone(),
             };
 
-            let songs: Result<Vec<_>, _> = files.iter().map(import_song_from_file).collect();
-            println!("{}", text_from_songs(&songs?, &settings)?);
+            let songs: Vec<Song> = files.iter().map(&load).collect::<Result<Vec<Song>, _>>()?;
+            println!("{}", text_from_songs(&songs, &settings)?);
         }
 
         Commands::Lilypond {
             paper_size,
             indent,
+            include_chords,
         } => {
             let file = only(inputs(&cli.files)?)?;
-            let song = import_song_from_file(file)?;
+            let song = load(file)?;
             let settings = LilypondSettings {
                 paper_size: paper_size.clone(),
                 layout_indent: indent.clone(),
+                include_chords: *include_chords,
                 ..LilypondSettings::default()
             };
             // A song with neither notation nor lyrics is nothing to engrave,
@@ -332,7 +408,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             // follow one another — each with its own X: number.
             let mut tune_number = 0usize;
             for file in files {
-                let song = import_song_from_file(file)?;
+                let song = load(file)?;
                 if warn_if_empty(&song, file) {
                     continue;
                 }
@@ -347,14 +423,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Commands::SongYml => {
             // One `.song.yml` file holds exactly one song.
             let file = only(inputs(&cli.files)?)?;
-            let song = import_song_from_file(file)?;
+            let song = load(file)?;
             print!("{}", exporter::song_yml::song_yml_from_song(&song)?);
         }
 
         Commands::Songbeamer { languages, output } => {
             // One `.sng` file holds exactly one song.
             let file = only(inputs(&cli.files)?)?;
-            let song = import_song_from_file(file)?;
+            let song = load(file)?;
             let settings = SngExportSettings {
                 languages: languages
                     .iter()

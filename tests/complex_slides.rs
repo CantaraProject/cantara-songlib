@@ -64,6 +64,7 @@ fn settings(elements: Vec<SlideElement>, max_lines: Option<usize>) -> SlideSetti
         meta_syntax: String::new(),
         show_meta_information: ShowMetaInformation::none(),
         language: LanguageConfiguration::Complex(elements),
+        show_chords: true,
     }
 }
 

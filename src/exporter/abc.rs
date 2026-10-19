@@ -20,6 +20,11 @@
 //! Songs whose refrain carries its own melody get a separate, annotated
 //! section after (or before, for refrain-first songs) the stanza.
 
+use crate::chords::{chords_from_content, TimedChord};
+use crate::music::{
+    key_alterations, parse_lilypond_duration, parse_note_name, parse_octave_marks,
+    resolve_relative_octave, Frac, Key, Pitch, STEP_LETTERS,
+};
 use crate::song::{Song, SongPart, SongPartContent, SongPartContentType};
 
 /// Configuration for ABC notation export output.
@@ -27,10 +32,11 @@ use crate::song::{Song, SongPart, SongPartContent, SongPartContentType};
 pub struct AbcSettings {
     /// The unit note length (`L:` field), e.g. `"1/4"` or `"1/8"`.
     pub unit_note_length: String,
-    /// Reserved for chord symbol output.
+    /// Whether to print chord symbols above the staff.
     ///
-    /// Chord content is stored in LilyPond `\chordmode` syntax which this
-    /// exporter does not parse yet, so the flag currently has no effect.
+    /// A song stores its chords in LilyPond `\chordmode` spelling; this
+    /// exporter reads them and places each symbol in front of the note it
+    /// sounds over — see [`crate::chords`].
     pub include_chords: bool,
     /// Whether to include all verses or only the first one.
     pub include_all_verses: bool,
@@ -46,72 +52,6 @@ impl Default for AbcSettings {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Rational numbers (note durations as a fraction of a whole note)
-// ---------------------------------------------------------------------------
-
-/// A non-negative rational number, always kept in lowest terms.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-struct Frac {
-    num: u32,
-    den: u32,
-}
-
-fn gcd(a: u32, b: u32) -> u32 {
-    if b == 0 {
-        a.max(1)
-    } else {
-        gcd(b, a % b)
-    }
-}
-
-impl Frac {
-    fn new(num: u32, den: u32) -> Frac {
-        let den = if den == 0 { 1 } else { den };
-        let g = gcd(num.max(1), den);
-        Frac {
-            num: num / g,
-            den: den / g,
-        }
-    }
-
-    fn zero() -> Frac {
-        Frac { num: 0, den: 1 }
-    }
-
-    fn is_zero(self) -> bool {
-        self.num == 0
-    }
-
-    /// `self / other`
-    fn div(self, other: Frac) -> Frac {
-        Frac::new(self.num * other.den, self.den * other.num)
-    }
-
-    fn add(self, other: Frac) -> Frac {
-        Frac::new(
-            self.num * other.den + other.num * self.den,
-            self.den * other.den,
-        )
-    }
-
-    /// `self - other`, saturating at zero.
-    fn sub(self, other: Frac) -> Frac {
-        let num = self.num * other.den;
-        let subtrahend = other.num * self.den;
-        if num <= subtrahend {
-            Frac::zero()
-        } else {
-            Frac::new(num - subtrahend, self.den * other.den)
-        }
-    }
-
-    /// `self >= other`
-    fn at_least(self, other: Frac) -> bool {
-        self.num * other.den >= other.num * self.den
-    }
-}
-
 /// Parse a `"1/4"`-style unit note length. Falls back to a quarter note.
 fn parse_unit_note_length(text: &str) -> Frac {
     let mut split = text.trim().split('/');
@@ -122,36 +62,6 @@ fn parse_unit_note_length(text: &str) -> Frac {
         (Some(n), None) if n > 0 => Frac::new(n, 1),
         _ => Frac::new(1, 4),
     }
-}
-
-/// Convert a LilyPond duration such as `4`, `2.` or `8..` into a fraction of a
-/// whole note. An empty string means "reuse the previous duration" and yields
-/// `None`.
-fn parse_lilypond_duration(text: &str) -> Option<Frac> {
-    let digits: String = text.chars().take_while(|c| c.is_ascii_digit()).collect();
-    if digits.is_empty() {
-        return None;
-    }
-    let base: u32 = digits.parse().ok()?;
-    let dots = text.chars().filter(|c| *c == '.').count() as u32;
-
-    // A note with n dots lasts (2^(n+1) - 1) / 2^n of its undotted value.
-    let dot_num = 2u32.pow(dots + 1) - 1;
-    let dot_den = 2u32.pow(dots);
-    Some(Frac::new(dot_num, base * dot_den))
-}
-
-// ---------------------------------------------------------------------------
-// The music event model
-// ---------------------------------------------------------------------------
-
-/// A pitch in scientific notation: `step` 0..6 maps to c…b, `octave` 4 is the
-/// octave of middle C.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-struct Pitch {
-    step: u8,
-    alter: i8,
-    octave: i32,
 }
 
 /// One musical event of a voice.
@@ -172,6 +82,9 @@ enum MusicEvent {
     Rest { duration: Frac, visible: bool },
     /// A bar line, already in ABC spelling (`|`, `||`, `|]`, `:|`, …).
     Barline(String),
+    /// A chord symbol, printed above the note that follows it. It sounds with
+    /// that note rather than before it, so it takes no time of its own.
+    ChordSymbol(String),
 }
 
 impl MusicEvent {
@@ -180,75 +93,9 @@ impl MusicEvent {
     }
 }
 
-const STEP_LETTERS: [char; 7] = ['c', 'd', 'e', 'f', 'g', 'a', 'b'];
-
-fn letter_to_step(c: char) -> Option<u8> {
-    STEP_LETTERS.iter().position(|l| *l == c).map(|p| p as u8)
-}
-
 // ---------------------------------------------------------------------------
 // LilyPond parsing
 // ---------------------------------------------------------------------------
-
-/// Parse the note name part of a LilyPond token (e.g. `fis`, `bes`, `ceses`).
-/// Returns the diatonic step, the alteration and how many characters were used.
-fn parse_note_name(token: &str) -> Option<(u8, i8, usize)> {
-    let mut chars = token.chars();
-    let first = chars.next()?;
-    let step = letter_to_step(first.to_ascii_lowercase())?;
-
-    let mut alter: i8 = 0;
-    let mut consumed = first.len_utf8();
-    let rest = &token[consumed..];
-    let mut offset = 0usize;
-
-    loop {
-        let remainder = &rest[offset..];
-        if remainder.starts_with("isis") {
-            alter += 2;
-            offset += 4;
-        } else if remainder.starts_with("eses") {
-            alter -= 2;
-            offset += 4;
-        } else if remainder.starts_with("is") {
-            alter += 1;
-            offset += 2;
-        } else if remainder.starts_with("es") {
-            alter -= 1;
-            offset += 2;
-        } else if remainder.starts_with('s') && (first == 'a' || first == 'e') && offset == 0 {
-            // Dutch short forms: `as` = a flat, `es` = e flat.
-            alter -= 1;
-            offset += 1;
-        } else {
-            break;
-        }
-    }
-
-    consumed += offset;
-    Some((step, alter, consumed))
-}
-
-/// Resolve a LilyPond `\relative` pitch against the previous pitch.
-///
-/// LilyPond picks the octave that keeps the interval to the previous note at a
-/// fourth or less; `'` and `,` shift the result by whole octaves.
-fn resolve_relative_octave(previous: &Pitch, step: u8, octave_marks: i32) -> i32 {
-    let previous_index = previous.octave * 7 + previous.step as i32;
-    let mut octave = previous.octave;
-    let mut index = octave * 7 + step as i32;
-
-    while index - previous_index > 3 {
-        octave -= 1;
-        index -= 7;
-    }
-    while previous_index - index > 3 {
-        octave += 1;
-        index += 7;
-    }
-
-    octave + octave_marks
-}
 
 /// Translate a LilyPond `\bar "…"` argument into its ABC spelling.
 fn lilypond_bar_to_abc(bar: &str) -> String {
@@ -278,11 +125,7 @@ fn parse_voice(content: &str) -> Vec<MusicEvent> {
     let mut index = 0usize;
     let mut last_duration = Frac::new(1, 4);
     // `\relative c'` starts from middle C.
-    let mut previous_pitch = Pitch {
-        step: 0,
-        alter: 0,
-        octave: 4,
-    };
+    let mut previous_pitch = Pitch::new(0, 0, 4);
 
     /// Apply a flag to the most recently parsed note.
     fn mark_last_note(events: &mut [MusicEvent], apply: impl Fn(&mut MusicEvent)) {
@@ -432,17 +275,10 @@ fn parse_voice(content: &str) -> Vec<MusicEvent> {
 fn parse_pitch_token(token: &str, previous_pitch: &mut Pitch) -> Option<Pitch> {
     let (step, alter, consumed) = parse_note_name(token)?;
 
-    let mut octave_marks = 0i32;
-    for c in token[consumed..].chars() {
-        match c {
-            '\'' => octave_marks += 1,
-            ',' => octave_marks -= 1,
-            _ => break,
-        }
-    }
+    let (octave_marks, _) = parse_octave_marks(&token[consumed..]);
 
     let octave = resolve_relative_octave(previous_pitch, step, octave_marks);
-    let pitch = Pitch { step, alter, octave };
+    let pitch = Pitch::new(step, alter, octave);
     *previous_pitch = pitch;
     Some(pitch)
 }
@@ -478,24 +314,11 @@ fn parse_note_or_rest(
 
     let (step, alter, consumed) = parse_note_name(token)?;
 
-    let mut octave_marks = 0i32;
-    let mut rest_index = consumed;
-    for c in token[consumed..].chars() {
-        match c {
-            '\'' => {
-                octave_marks += 1;
-                rest_index += c.len_utf8();
-            }
-            ',' => {
-                octave_marks -= 1;
-                rest_index += c.len_utf8();
-            }
-            _ => break,
-        }
-    }
+    let (octave_marks, mark_length) = parse_octave_marks(&token[consumed..]);
+    let rest_index = consumed + mark_length;
 
     let octave = resolve_relative_octave(previous_pitch, step, octave_marks);
-    let pitch = Pitch { step, alter, octave };
+    let pitch = Pitch::new(step, alter, octave);
     *previous_pitch = pitch;
 
     let duration = parse_lilypond_duration(&token[rest_index..]).unwrap_or(*last_duration);
@@ -511,108 +334,93 @@ fn parse_note_or_rest(
 }
 
 // ---------------------------------------------------------------------------
+// Chord symbols
+// ---------------------------------------------------------------------------
+
+/// Put each chord symbol in front of the note it sounds with.
+///
+/// Both the melody and the chord line are read from the beginning of the part,
+/// so a chord's position in time is all that is needed to find its note. A
+/// chord that falls between two notes is printed on the note that is still
+/// sounding, which is where a player looks for it.
+///
+/// Chords past the end of the melody are dropped: there is no note left to
+/// print them on.
+fn insert_chord_symbols(events: Vec<MusicEvent>, chords: &[TimedChord]) -> Vec<MusicEvent> {
+    if chords.is_empty() {
+        return events;
+    }
+
+    let mut result: Vec<MusicEvent> = Vec::with_capacity(events.len() + chords.len());
+    let mut time = Frac::zero();
+    let mut next = 0usize;
+
+    for event in events {
+        let duration = match &event {
+            MusicEvent::Note { duration, .. } | MusicEvent::Rest { duration, .. } => *duration,
+            // A bar line or an earlier chord symbol takes no time, and a chord
+            // belongs after the bar line that opens its measure.
+            MusicEvent::Barline(_) | MusicEvent::ChordSymbol(_) => {
+                result.push(event);
+                continue;
+            }
+        };
+
+        // Every chord that starts before this note ends goes on it. More than
+        // one can only happen when the chords change faster than the melody
+        // moves, and then the last of them is the one still sounding.
+        let end = time.add(duration);
+        let mut pending: Option<&TimedChord> = None;
+        while let Some(chord) = chords.get(next) {
+            if chord.start.at_least(end) {
+                break;
+            }
+            pending = Some(chord);
+            next += 1;
+        }
+        if let Some(chord) = pending {
+            result.push(MusicEvent::ChordSymbol(chord.symbol.clone()));
+        }
+
+        result.push(event);
+        time = time.add(duration);
+    }
+
+    result
+}
+
+/// The chord line that goes with a part's melody, laid out in time.
+///
+/// A part that has no chords of its own borrows them from the part whose
+/// melody it reuses — verse 2 sings verse 1's tune over verse 1's chords.
+fn chords_for_part(song: &Song, part: &SongPart, settings: &AbcSettings) -> Vec<TimedChord> {
+    if !settings.include_chords {
+        return Vec::new();
+    }
+
+    let own = part
+        .content(&SongPartContentType::Chords)
+        .or_else(|| {
+            part.is_repetition_of
+                .as_ref()
+                .and_then(|id| song.part(id))
+                .and_then(|source| source.content(&SongPartContentType::Chords))
+        });
+
+    own.map(|content| chords_from_content(&content.content))
+        .unwrap_or_default()
+}
+
+// ---------------------------------------------------------------------------
 // Key signatures
 // ---------------------------------------------------------------------------
 
-/// Position of a tonic on the circle of fifths (naturals only).
-fn natural_fifths(step: u8) -> i32 {
-    match step {
-        3 => -1, // f
-        0 => 0,  // c
-        4 => 1,  // g
-        1 => 2,  // d
-        5 => 3,  // a
-        2 => 4,  // e
-        6 => 5,  // b
-        _ => 0,
-    }
-}
-
-/// Offset a mode adds to the circle-of-fifths position of its tonic.
-fn mode_fifths_offset(mode: &str) -> i32 {
-    match mode {
-        "minor" | "aeolian" | "m" => -3,
-        "dorian" | "dor" => -2,
-        "phrygian" | "phr" => -4,
-        "lydian" | "lyd" => 1,
-        "mixolydian" | "mix" => -1,
-        "locrian" | "loc" => -5,
-        _ => 0, // major / ionian
-    }
-}
-
-/// Split a key string such as `"f major"`, `"bes minor"` or `"F# dorian"` into
-/// the tonic's step, its alteration and the mode.
-fn split_key(key_str: &str) -> Option<(u8, i8, String)> {
-    let lowered = key_str.trim().to_lowercase();
-    let mut tokens = lowered.split_whitespace();
-    let tonic = tokens.next()?;
-    let mut mode: String = tokens.collect::<Vec<&str>>().join(" ");
-
-    let mut chars = tonic.chars();
-    let letter = chars.next()?;
-    let step = letter_to_step(letter)?;
-
-    let suffix: String = chars.collect();
-    let mut alter: i8 = 0;
-    match suffix.as_str() {
-        "" => {}
-        "#" | "is" | "sharp" => alter = 1,
-        "##" | "isis" | "x" => alter = 2,
-        "b" | "es" | "flat" => alter = -1,
-        "bb" | "eses" => alter = -2,
-        "s" if letter == 'a' || letter == 'e' => alter = -1,
-        _ => {}
-    }
-
-    // Allow "b flat major" / "f sharp minor" spellings.
-    if alter == 0 {
-        match mode.split_whitespace().next() {
-            Some("flat") => {
-                alter = -1;
-                mode = mode.trim_start_matches("flat").trim().to_string();
-            }
-            Some("sharp") => {
-                alter = 1;
-                mode = mode.trim_start_matches("sharp").trim().to_string();
-            }
-            _ => {}
-        }
-    }
-
-    if mode.is_empty() {
-        mode = "major".to_string();
-    }
-
-    Some((step, alter, mode))
-}
-
 /// Number of sharps (positive) or flats (negative) of a key.
+///
+/// An unreadable key is treated as C major: an export without accidentals is
+/// still a usable tune, while refusing one would lose the song entirely.
 fn key_fifths(key_str: &str) -> i32 {
-    match split_key(key_str) {
-        Some((step, alter, mode)) => {
-            natural_fifths(step) + alter as i32 * 7 + mode_fifths_offset(&mode)
-        }
-        None => 0,
-    }
-}
-
-/// The alteration each diatonic step carries in a key with `fifths` accidentals.
-fn key_alterations(fifths: i32) -> [i8; 7] {
-    const SHARP_ORDER: [usize; 7] = [3, 0, 4, 1, 5, 2, 6]; // f c g d a e b
-    const FLAT_ORDER: [usize; 7] = [6, 2, 5, 1, 4, 0, 3]; // b e a d g c f
-
-    let mut alterations = [0i8; 7];
-    if fifths > 0 {
-        for step in SHARP_ORDER.iter().take(fifths.min(7) as usize) {
-            alterations[*step] = 1;
-        }
-    } else if fifths < 0 {
-        for step in FLAT_ORDER.iter().take((-fifths).min(7) as usize) {
-            alterations[*step] = -1;
-        }
-    }
-    alterations
+    Key::parse(key_str).map(|key| key.fifths()).unwrap_or(0)
 }
 
 /// Convert a key string from LilyPond format to the ABC `K:` field.
@@ -620,30 +428,9 @@ fn key_alterations(fifths: i32) -> [i8; 7] {
 /// LilyPond: `"f major"`, `"d minor"`, `"bes major"` →
 /// ABC: `"F"`, `"Dm"`, `"Bb"`.
 pub fn convert_key_to_abc(key_str: &str) -> String {
-    let (step, alter, mode) = match split_key(key_str) {
-        Some(parts) => parts,
-        None => return "C".to_string(),
-    };
-
-    let mut tonic = STEP_LETTERS[step as usize].to_ascii_uppercase().to_string();
-    match alter {
-        1 => tonic.push('#'),
-        2 => tonic.push_str("##"),
-        -1 => tonic.push('b'),
-        -2 => tonic.push_str("bb"),
-        _ => {}
-    }
-
-    match mode.as_str() {
-        "major" | "ionian" => tonic,
-        "minor" | "aeolian" => format!("{}m", tonic),
-        "mixolydian" => format!("{}mix", tonic),
-        "dorian" => format!("{}dor", tonic),
-        "phrygian" => format!("{}phr", tonic),
-        "lydian" => format!("{}lyd", tonic),
-        "locrian" => format!("{}loc", tonic),
-        _ => tonic,
-    }
+    Key::parse(key_str)
+        .map(|key| key.to_abc())
+        .unwrap_or_else(|| "C".to_string())
 }
 
 // ---------------------------------------------------------------------------
@@ -730,6 +517,15 @@ fn render_pitch(pitch: &Pitch, key: &[i8; 7], bar: &mut BarAccidentals) -> Strin
     result
 }
 
+/// Take the chord symbol waiting to be printed, as the ABC annotation that
+/// goes in front of a note: `"Bm"`, or nothing when no chord changes here.
+fn take_chord(chord: &mut Option<&str>) -> String {
+    match chord.take() {
+        Some(symbol) => format!("\"{}\"", symbol),
+        None => String::new(),
+    }
+}
+
 /// Render a slice of events into a single ABC music line.
 fn render_events(
     events: &[MusicEvent],
@@ -738,16 +534,25 @@ fn render_events(
     bar: &mut BarAccidentals,
 ) -> String {
     let mut pieces: Vec<String> = Vec::new();
+    // A chord symbol is written as `"Bm"` glued to the front of its note, so
+    // it waits here until that note is rendered.
+    let mut chord: Option<&str> = None;
 
     for event in events {
         match event {
+            MusicEvent::ChordSymbol(symbol) => chord = Some(symbol),
             MusicEvent::Barline(text) => {
                 bar.clear();
                 pieces.push(text.clone());
             }
             MusicEvent::Rest { duration, visible } => {
                 let symbol = if *visible { 'z' } else { 'x' };
-                pieces.push(format!("{}{}", symbol, render_duration(*duration, unit)));
+                pieces.push(format!(
+                    "{}{}{}",
+                    take_chord(&mut chord),
+                    symbol,
+                    render_duration(*duration, unit)
+                ));
             }
             MusicEvent::Note {
                 pitches,
@@ -756,7 +561,7 @@ fn render_events(
                 slur_start,
                 slur_end,
             } => {
-                let mut text = String::new();
+                let mut text = take_chord(&mut chord);
                 if *slur_start {
                     text.push('(');
                 }
@@ -1178,6 +983,11 @@ fn segment_events(events: &[MusicEvent], reference: &[Vec<Syllable>]) -> Vec<(us
             while index < events.len() && !flags[index] {
                 index += 1;
             }
+            // A chord symbol is printed on the note that follows it, so one
+            // that ended up last goes to the next line together with it.
+            while index > start && matches!(events[index - 1], MusicEvent::ChordSymbol(_)) {
+                index -= 1;
+            }
         }
 
         if index > start {
@@ -1311,6 +1121,14 @@ fn render_section(
 // Song → sections
 // ---------------------------------------------------------------------------
 
+/// A part together with the melody it sings, which may be another part's.
+fn part_with_voice<'a>(
+    song: &'a Song,
+    part: &'a SongPart,
+) -> Option<(&'a SongPart, &'a SongPartContent)> {
+    song.voice_for_part(part).map(|voice| (part, voice))
+}
+
 /// Find voice content that is stored on the part itself (not inherited).
 fn find_own_voice(part: &SongPart) -> Option<&SongPartContent> {
     part.contents.iter().find(|content| {
@@ -1410,15 +1228,17 @@ fn build_sections(song: &Song, settings: &AbcSettings) -> Result<Vec<Section>, S
         .collect();
 
     // The stanza melody; fall back to any part that carries a voice so that
-    // refrain-only or single-block songs still export.
-    let stanza_voice = verse_parts
+    // refrain-only or single-block songs still export. The part it came from
+    // is kept too — it is the one whose chord line goes with the melody.
+    let (stanza_part, stanza_voice) = verse_parts
         .iter()
-        .find_map(|part| song.voice_for_part(part))
-        .or_else(|| parts.iter().find_map(|part| song.voice_for_part(part)))
+        .find_map(|part| part_with_voice(song, part))
+        .or_else(|| parts.iter().find_map(|part| part_with_voice(song, part)))
         .ok_or_else(|| "Song has no voice content for ABC export".to_string())?;
 
-    let refrain_voice: Option<&SongPartContent> =
-        refrain_parts.iter().find_map(|part| find_own_voice(part));
+    let refrain_voice: Option<(&SongPart, &SongPartContent)> = refrain_parts
+        .iter()
+        .find_map(|part| find_own_voice(part).map(|voice| (*part, voice)));
 
     // --- Verse lyrics ---
     let mut verse_lyrics: Vec<(Option<String>, Vec<Vec<Syllable>>)> = Vec::new();
@@ -1465,11 +1285,14 @@ fn build_sections(song: &Song, settings: &AbcSettings) -> Result<Vec<Section>, S
         .map(|content| lyrics_to_lines(&content.content))
         .unwrap_or_default();
 
-    let stanza_events = parse_voice(&stanza_voice.content);
+    let stanza_events = insert_chord_symbols(
+        parse_voice(&stanza_voice.content),
+        &chords_for_part(song, stanza_part, settings),
+    );
 
     // A refrain without its own melody shares the stanza music; its text is
     // added as one more lyrics line underneath the stanza.
-    if refrain_voice.is_none() {
+    let Some((refrain_part, refrain_voice)) = refrain_voice else {
         let mut lyrics = verse_lyrics;
         if !refrain_lyrics.is_empty() {
             lyrics.push((Some("R.".to_string()), refrain_lyrics));
@@ -1479,9 +1302,12 @@ fn build_sections(song: &Song, settings: &AbcSettings) -> Result<Vec<Section>, S
             events: stanza_events,
             lyrics,
         }]);
-    }
+    };
 
-    let refrain_events = parse_voice(&refrain_voice.unwrap().content);
+    let refrain_events = insert_chord_symbols(
+        parse_voice(&refrain_voice.content),
+        &chords_for_part(song, refrain_part, settings),
+    );
 
     let stanza_section = Section {
         annotation: Some("Stanza".to_string()),
@@ -1542,6 +1368,12 @@ fn insert_missing_barlines(sections: &mut [Section], bar_length: Frac, initial_f
                     continue;
                 }
                 MusicEvent::Note { duration, .. } | MusicEvent::Rest { duration, .. } => *duration,
+                // A chord symbol belongs to the note behind it; it neither
+                // fills the measure nor starts a new one.
+                MusicEvent::ChordSymbol(_) => {
+                    rebarred.push(event);
+                    continue;
+                }
             };
 
             rebarred.push(event);
@@ -1669,7 +1501,10 @@ impl PartPhrases {
 
         let mut sections = [Section {
             annotation: None,
-            events: parse_voice(&voice.content),
+            events: insert_chord_symbols(
+                parse_voice(&voice.content),
+                &chords_for_part(song, part, settings),
+            ),
             lyrics: Vec::new(),
         }];
 
@@ -1990,7 +1825,10 @@ pub fn abc_part_from_song(
 
     let mut sections = [Section {
         annotation: None,
-        events: parse_voice(&voice.content),
+        events: insert_chord_symbols(
+            parse_voice(&voice.content),
+            &chords_for_part(song, part, settings),
+        ),
         lyrics,
     }];
     let bar_length = meter_bar_length(song);
