@@ -27,6 +27,26 @@ The key may be written in any of the spellings the formats of this crate use:
 `"f major"`, `"F"`, `"Dm"`, `"bes"`, `"Bb major"`, `"e flat minor"`,
 `"F#m"`, `"E dorian"`.
 
+## The mode stays as it is
+
+Transposing moves every note by the same interval, which leaves the mode where
+it was: a song in a minor key stays minor. A target that names only a tonic
+therefore takes the song's own mode — `--transpose F` turns a song in D minor
+into F minor, not F major — while a target that insists on another mode is
+refused rather than answered with a key signature that contradicts the notes
+underneath it:
+
+```text
+$ cantara-songlib song.song.yml abc --transpose "d minor"     # song is in d major
+Error: "cannot transpose 'song.song.yml': transposing moves every note by the
+       same interval, so a song in d major cannot become one in d minor; name a
+       key in major instead"
+```
+
+Two keys that name the same pitch, such as `ges major` and `fis major`, are a
+respelling rather than a move: the notes stay where they are in every direction
+and only their spelling changes.
+
 ## From Rust
 
 ```rust

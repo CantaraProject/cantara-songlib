@@ -114,6 +114,138 @@ fn a_phrase_excerpt_carries_the_chords_of_its_phrase() {
     assert!(!first.contains("\"Bm\""), "{}", first);
 }
 
+/// A song built from YAML inline, for the cases no test file covers.
+fn song_from(yml: &str) -> Song {
+    song_yml::import_from_yml_string(yml).unwrap()
+}
+
+#[test]
+fn a_chord_changing_under_a_held_note_keeps_its_place() {
+    // The melody holds one whole note while the harmony changes halfway: the
+    // note is cut in two and tied, so the G sounds where it belongs instead of
+    // swallowing the C or starting half a bar early.
+    let song = song_from(
+        r#"
+version: 0.1
+title: Held note
+score:
+  key: c major
+  time: 4/4
+parts:
+  - type: stanza
+    contents:
+    - type: chords
+      number: 1
+      content: c2 g2
+    - type: voice
+      number: 1
+      content: c'1
+    - type: lyrics
+      number: 1
+      content: one
+"#,
+    );
+
+    let abc = abc_from_song(&song, &AbcSettings::default()).unwrap();
+    assert!(
+        abc.contains("\"C\"c2- \"G\"c2"),
+        "the harmony change was lost:\n{}",
+        abc
+    );
+    // The second half continues a tie, so it takes no syllable of its own.
+    assert!(abc.contains("w:1.~one _"), "{}", abc);
+}
+
+#[test]
+fn chords_are_inherited_along_the_whole_chain_of_repetitions() {
+    // Three verses printed from one melody: the second repeats the first, the
+    // third repeats the second. All three are sung over the first one's
+    // chords.
+    let song = song_from(
+        r#"
+version: 0.1
+title: Three verses
+score:
+  key: c major
+  time: 4/4
+parts:
+  - type: stanza
+    contents:
+    - type: chords
+      number: 1
+      content: c1
+    - type: voice
+      number: 1
+      content: c'4 d e f
+    - type: lyrics
+      number: 1
+      content: one two three four
+    - type: lyrics
+      number: 2
+      content: five six se -- ven
+    - type: lyrics
+      number: 3
+      content: eight nine ten more
+"#,
+    );
+
+    let third = song.part(&"verse.3".parse().unwrap()).unwrap();
+    assert!(third.own_chords().is_none(), "verse 3 has chords of its own");
+    assert_eq!(song.chords_for_part(third).unwrap().content, "c1");
+
+    // A notation slide for verse 3 shows them too.
+    let phrases = PartPhrases::of(&song, third, &AbcSettings::default()).unwrap();
+    let excerpt = phrases.excerpt(0..1).unwrap();
+    assert!(excerpt.contains("\"C\""), "{}", excerpt);
+}
+
+#[test]
+fn an_excerpt_states_the_harmony_it_starts_under() {
+    // Two phrases over one held chord. The full export prints the chord once,
+    // but each excerpt is a tune of its own and has to name it again.
+    let song = song_from(
+        r#"
+version: 0.1
+title: Two phrases
+score:
+  key: c major
+  time: 4/4
+parts:
+  - type: stanza
+    contents:
+    - type: chords
+      number: 1
+      content: c1 | c1
+    - type: voice
+      number: 1
+      content: c'4 d e f | g4 a b c |
+    - type: lyrics
+      number: 1
+      content: |
+        one two three four
+        five six se -- ven
+"#,
+    );
+
+    let part = song.part(&"verse.1".parse().unwrap()).unwrap();
+    let phrases = PartPhrases::of(&song, part, &AbcSettings::default()).unwrap();
+    assert_eq!(phrases.len(), 2);
+
+    for index in 0..phrases.len() {
+        let excerpt = phrases.excerpt(index..index + 1).unwrap();
+        assert!(
+            excerpt.contains("\"C\""),
+            "phrase {} does not say which chord it is under:\n{}",
+            index,
+            excerpt
+        );
+    }
+
+    // The full export still prints the held chord only once.
+    let abc = abc_from_song(&song, &AbcSettings::default()).unwrap();
+    assert_eq!(abc.matches("\"C\"").count(), 1, "{}", abc);
+}
+
 // ---------------------------------------------------------------------------
 // Chords in the LilyPond exports
 // ---------------------------------------------------------------------------
@@ -175,6 +307,108 @@ fn lilypond_chords_can_be_left_out() {
         assert!(!output.contains("chordmode"), "{}", output);
         assert!(!output.contains("ChordNames"), "{}", output);
     }
+}
+
+/// A stanza without chords and a refrain with its own melody and chords.
+const CHORDLESS_STANZA: &str = r#"
+version: 0.1
+title: Chordless stanza
+score:
+  key: c major
+  time: 4/4
+parts:
+  - type: stanza
+    contents:
+    - type: voice
+      number: 1
+      content: c'4 d e f | g2 g2 |
+    - type: lyrics
+      number: 1
+      content: |
+        one two three four
+        five six
+  - type: refrain
+    contents:
+    - type: chords
+      number: 1
+      content: f1 | c1
+    - type: voice
+      number: 1
+      content: a'4 g f e | c2 c2 |
+    - type: lyrics
+      number: 1
+      content: |
+        re frain here now
+        and more
+"#;
+
+#[test]
+fn a_section_without_chords_keeps_its_time_on_the_chord_track() {
+    let song = song_from(CHORDLESS_STANZA);
+    let ly = lilypond_from_song(&song, &LilypondSettings::default()).unwrap();
+
+    // The stanza is two whole notes long, so the refrain's chords start two
+    // whole notes in rather than above the stanza's first bar.
+    assert!(
+        ly.contains("s1*2\n  f1 | c1"),
+        "the chord track does not wait for the stanza:\n{}",
+        ly
+    );
+}
+
+#[test]
+fn two_sections_with_the_same_chords_both_keep_their_bars() {
+    // Both melodies are printed, so both chord lines have to be, even though
+    // they read alike — dropping one would shift the other's harmony.
+    let song = song_from(
+        r#"
+version: 0.1
+title: Same chords twice
+score:
+  key: c major
+  time: 4/4
+parts:
+  - type: stanza
+    contents:
+    - type: chords
+      number: 1
+      content: c1 | g1
+    - type: voice
+      number: 1
+      content: c'4 d e f | g2 g2 |
+    - type: lyrics
+      number: 1
+      content: |
+        one two three four
+        five six
+  - type: refrain
+    contents:
+    - type: chords
+      number: 1
+      content: c1 | g1
+    - type: voice
+      number: 1
+      content: a'4 g f e | c2 c2 |
+    - type: lyrics
+      number: 1
+      content: |
+        re frain here now
+        and more
+"#,
+    );
+
+    let ly = lilypond_from_song(&song, &LilypondSettings::default()).unwrap();
+    let chord_block = ly
+        .split_once("\\chordmode {")
+        .and_then(|(_, rest)| rest.split_once('}'))
+        .map(|(block, _)| block.to_string())
+        .unwrap();
+    assert_eq!(
+        chord_block.matches("c1 | g1").count(),
+        2,
+        "a chord line was dropped:\n{}",
+        chord_block
+    );
 }
 
 // ---------------------------------------------------------------------------

@@ -43,7 +43,8 @@ may be left out. A rest (`r`) says that no chord sounds.
 
 The chord line runs in parallel with the melody of the same part, from the
 first note onwards. A part that reuses another part's melody — verse 2 singing
-verse 1's tune — is sung over that part's chords as well.
+verse 1's tune — is sung over that part's chords as well, however long the
+chain of repetitions is.
 
 ## Where the chords show up
 
@@ -69,6 +70,22 @@ w:1.~Toch-ter _ Zi-on, fre- _ _ _ _ ue dich!
 A chord that merely repeats the one before it is not printed again — a held
 chord is shown by leaving the space empty, the way a lead sheet does. A rest in
 the chord line ends the chord, so the same chord after a rest is printed afresh.
+
+Where the harmony changes under a note that is still sounding, the note is cut
+in two and tied back together, so that the new chord stands where it starts:
+
+```text
+chords  c2 g2        melody  c'1        becomes  "C"c2- "G"c2
+```
+
+The two halves sound as the undivided note did, and because the second half
+continues a tie it sings no syllable of its own — the words stay where they
+were.
+
+A single-phrase excerpt (`PartPhrases::excerpt`, which is what a presentation
+slide shows) is a tune of its own: whoever reads it cannot see the phrases
+before it, so the chord still sounding at its first note is printed again even
+though the full export leaves a held chord unrepeated.
 
 Chord symbols can be left out with `AbcSettings::include_chords`:
 

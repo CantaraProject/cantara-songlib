@@ -73,6 +73,17 @@ impl Frac {
     }
 }
 
+impl fmt::Display for Frac {
+    /// As LilyPond and ABC write a fraction: `3/4`, or just `4` for a whole
+    /// number.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self.den {
+            1 => write!(f, "{}", self.num),
+            den => write!(f, "{}/{}", self.num, den),
+        }
+    }
+}
+
 /// Convert a LilyPond duration such as `4`, `2.` or `8..` into a fraction of a
 /// whole note. An empty string means "reuse the previous duration" and yields
 /// `None`.
@@ -239,6 +250,36 @@ pub(crate) fn parse_octave_marks(text: &str) -> (i32, usize) {
     (marks, consumed)
 }
 
+/// Characters a note token may carry after its name and octave marks:
+/// durations (`4`, `2.`, `4*2/3`), accidental reminders (`!`, `?`) and
+/// articulation markers that are not commands.
+fn is_note_suffix_char(c: char) -> bool {
+    c.is_ascii_digit() || matches!(c, '.' | '*' | '/' | '!' | '?' | '-' | '_' | '^' | '+')
+}
+
+/// Read a token that has to be a note from end to end.
+///
+/// [`parse_note_name`] recognises a *prefix*, which is all a note needs — but
+/// it also matches the beginning of any word that happens to start with a note
+/// letter. `\clef bass` would become a `b` followed by the leftover `ass`,
+/// and transposing it would write `cisass` into the score. A note is therefore
+/// only accepted when everything after its name and octave marks could belong
+/// to a note as well, which no word of prose can manage.
+///
+/// Returns the step, the alteration, the octave marks and how many bytes the
+/// name and the marks took, so that a caller can keep the suffix as it is.
+pub(crate) fn parse_note_token(token: &str) -> Option<(u8, i8, i32, usize)> {
+    let (step, alter, name_length) = parse_note_name(token)?;
+    let (marks, mark_length) = parse_octave_marks(&token[name_length..]);
+    let consumed = name_length + mark_length;
+
+    if !token[consumed..].chars().all(is_note_suffix_char) {
+        return None;
+    }
+
+    Some((step, alter, marks, consumed))
+}
+
 /// Resolve a LilyPond `\relative` pitch against the previous pitch.
 ///
 /// LilyPond picks the octave that keeps the interval to the previous note at a
@@ -258,6 +299,102 @@ pub(crate) fn resolve_relative_octave(previous: &Pitch, step: u8, octave_marks: 
     }
 
     octave + octave_marks
+}
+
+// ---------------------------------------------------------------------------
+// Scanning LilyPond source
+// ---------------------------------------------------------------------------
+
+/// Characters that end a note token.
+///
+/// A tie binds two notes without needing a space between them, so `~` ends a
+/// token as well — otherwise `c4~c4` would be read as a single note and the
+/// second one would never be looked at.
+pub(crate) fn is_token_delimiter(c: char) -> bool {
+    c.is_whitespace()
+        || matches!(
+            c,
+            '|' | '(' | ')' | '<' | '>' | '\\' | '"' | '[' | ']' | '{' | '}' | '~' | '%'
+        )
+}
+
+/// The commands that set a property, together with the arguments they take.
+///
+/// These are the ones whose arguments read like music without being music:
+/// `\set Staff.autoBeaming = ##f` holds an `a` and a `b` that are no more
+/// notes than the `e` in "tempo" is.
+const PROPERTY_COMMANDS: [&str; 5] = ["set", "unset", "override", "revert", "tweak"];
+
+/// The commands that take a single word which is not a note of the melody: a
+/// clef name, a rehearsal mark, a tempo indication, a repeat kind, the tonic
+/// of a key signature.
+const WORD_ARGUMENT_COMMANDS: [&str; 9] = [
+    "clef",
+    "mark",
+    "tempo",
+    "time",
+    "partial",
+    "repeat",
+    "tuplet",
+    "transposition",
+    "key",
+];
+
+/// Whether a command's arguments have to be skipped rather than read as music,
+/// and how far — see [`skip_command_arguments`].
+pub(crate) fn command_takes_arguments(command: &str) -> bool {
+    PROPERTY_COMMANDS.contains(&command) || WORD_ARGUMENT_COMMANDS.contains(&command)
+}
+
+/// Skip the arguments of a command that carries no music, returning the byte
+/// index just past them.
+///
+/// Only the arguments are skipped, never the rest of the line: music may
+/// follow a property on the same line, and `\set Staff.autoBeaming = ##f c4 d`
+/// still has to transpose its four notes.
+///
+/// * A property command takes a path, optionally `=` and a value. A Scheme
+///   value may be parenthesised (`#'()`, `#(list 1 2)`), so parentheses are
+///   balanced rather than counted as one word.
+/// * Every other command in the list takes a single word.
+pub(crate) fn skip_command_arguments(content: &str, command: &str, from: usize) -> usize {
+    let mut index = skip_argument_word(content, from);
+
+    if PROPERTY_COMMANDS.contains(&command) {
+        let after_path = skip_whitespace(content, index);
+        if content[after_path..].starts_with('=') {
+            index = skip_argument_word(content, after_path + 1);
+        }
+    }
+
+    index
+}
+
+fn skip_whitespace(content: &str, from: usize) -> usize {
+    let remainder = &content[from..];
+    from + (remainder.len() - remainder.trim_start().len())
+}
+
+/// Skip one whitespace-separated argument, keeping parentheses balanced so
+/// that a Scheme expression counts as a single word.
+fn skip_argument_word(content: &str, from: usize) -> usize {
+    let mut index = skip_whitespace(content, from);
+    let mut depth = 0usize;
+
+    for c in content[index..].chars() {
+        match c {
+            '(' => depth += 1,
+            ')' => depth = depth.saturating_sub(1),
+            _ if depth == 0 && (c.is_whitespace() || c == '%') => break,
+            _ => {}
+        }
+        index += c.len_utf8();
+        if depth == 0 && c == ')' {
+            break;
+        }
+    }
+
+    index
 }
 
 // ---------------------------------------------------------------------------
@@ -335,39 +472,16 @@ impl Key {
     /// assert_eq!(Key::parse("e flat minor").unwrap().to_lilypond(), "ees minor");
     /// ```
     pub fn parse(text: &str) -> Option<Key> {
-        let lowered = text.trim().to_lowercase();
-        let mut tokens = lowered.split_whitespace();
-        let tonic = tokens.next()?;
-        let remainder: Vec<&str> = tokens.collect();
+        parse_key_with_explicit_mode(text).map(|(key, _)| key)
+    }
 
-        let mut chars = tonic.chars();
-        let letter = chars.next()?;
-        let step = letter_to_step(letter)?;
-        let suffix: String = chars.collect();
-
-        // The accidental may hang off the tonic (`bes`, `F#`) or be a word of
-        // its own (`b flat`); whatever is left over has to name the mode.
-        let (alter, mode_in_suffix) = split_accidental(letter, &suffix)?;
-        let (alter, mode_words) = match (alter, remainder.first()) {
-            (0, Some(&"flat")) if mode_in_suffix.is_empty() => (-1, &remainder[1..]),
-            (0, Some(&"sharp")) if mode_in_suffix.is_empty() => (1, &remainder[1..]),
-            _ => (alter, &remainder[..]),
-        };
-
-        // Either the tonic carries the mode or the words after it do, never both.
-        let mode_text = if mode_in_suffix.is_empty() {
-            mode_words.join(" ")
-        } else if mode_words.is_empty() {
-            mode_in_suffix.to_string()
-        } else {
-            return None;
-        };
-
-        Some(Key {
-            step,
-            alter,
-            mode: canonical_mode(&mode_text)?.to_string(),
-        })
+    /// The same key in another mode.
+    pub(crate) fn with_mode(&self, mode: &str) -> Key {
+        Key {
+            step: self.step,
+            alter: self.alter,
+            mode: mode.to_string(),
+        }
     }
 
     /// The tonic as a pitch, in the octave below middle C — LilyPond's
@@ -416,6 +530,49 @@ impl fmt::Display for Key {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(&self.to_lilypond())
     }
+}
+
+/// Parse a key, reporting whether its mode was spelled out.
+///
+/// `"F"` names a tonic and leaves the mode open, while `"f major"` and `"Dm"`
+/// state it. The difference matters to the transposer: a bare tonic takes the
+/// mode of the song being transposed, so `--transpose F` works for a song in
+/// D minor as well as one in D major.
+pub(crate) fn parse_key_with_explicit_mode(text: &str) -> Option<(Key, bool)> {
+    let lowered = text.trim().to_lowercase();
+    let mut tokens = lowered.split_whitespace();
+    let tonic = tokens.next()?;
+    let remainder: Vec<&str> = tokens.collect();
+
+    let mut chars = tonic.chars();
+    let letter = chars.next()?;
+    let step = letter_to_step(letter)?;
+    let suffix: String = chars.collect();
+
+    // The accidental may hang off the tonic (`bes`, `F#`) or be a word of its
+    // own (`b flat`); whatever is left over has to name the mode.
+    let (alter, mode_in_suffix) = split_accidental(letter, &suffix)?;
+    let (alter, mode_words) = match (alter, remainder.first()) {
+        (0, Some(&"flat")) if mode_in_suffix.is_empty() => (-1, &remainder[1..]),
+        (0, Some(&"sharp")) if mode_in_suffix.is_empty() => (1, &remainder[1..]),
+        _ => (alter, &remainder[..]),
+    };
+
+    // Either the tonic carries the mode or the words after it do, never both.
+    let mode_text = if mode_in_suffix.is_empty() {
+        mode_words.join(" ")
+    } else if mode_words.is_empty() {
+        mode_in_suffix.to_string()
+    } else {
+        return None;
+    };
+
+    let key = Key {
+        step,
+        alter,
+        mode: canonical_mode(&mode_text)?.to_string(),
+    };
+    Some((key, !mode_text.is_empty()))
 }
 
 /// Split the accidental off a tonic's suffix, returning it and whatever is
@@ -504,14 +661,6 @@ pub struct Interval {
 }
 
 impl Interval {
-    /// The unison: transposing by it changes nothing.
-    pub(crate) fn unison() -> Interval {
-        Interval {
-            steps: 0,
-            semitones: 0,
-        }
-    }
-
     pub(crate) fn is_unison(&self) -> bool {
         self.steps == 0 && self.semitones == 0
     }
@@ -521,37 +670,53 @@ impl Interval {
         self.semitones.abs()
     }
 
+    /// Move this interval by whole octaves.
+    ///
+    /// An octave is seven diatonic steps and twelve semitones; shifting only
+    /// one of them would describe an interval that does not exist, and a pitch
+    /// transposed by it would come out spelled with a pile of accidentals.
+    fn shifted(self, octaves: i32) -> Interval {
+        Interval {
+            steps: self.steps + 7 * octaves,
+            semitones: self.semitones + 12 * octaves,
+        }
+    }
+
     /// The interval that leads from `from` to `to` in the given direction.
     ///
     /// A key names a pitch class, not a pitch, so the same pair of keys gives
     /// two different intervals: `d major` → `f major` is a minor third up or a
     /// major sixth down. `direction` picks between them;
     /// [`TransposeDirection::Nearest`] takes the smaller move.
+    ///
+    /// Two keys that name the same pitch — `ges major` and `fis major` — are a
+    /// respelling rather than a move, so every direction leaves the pitches
+    /// where they are and only changes how they are written.
     pub(crate) fn between(from: &Key, to: &Key, direction: TransposeDirection) -> Interval {
-        let up = Interval {
-            steps: (to.step as i32 - from.step as i32).rem_euclid(7),
-            semitones: (to.tonic().chroma() - from.tonic().chroma()).rem_euclid(12),
-        };
-
-        if up.is_unison() {
-            // The same key: no direction moves the music anywhere.
-            return Interval::unison();
-        }
-
-        // Going down to the same key is going up minus an octave.
-        let down = Interval {
-            steps: up.steps - 7,
-            semitones: up.semitones - 12,
+        // The interval to the target tonic written in the same octave as the
+        // one the music starts from. It may point either way, and it is the
+        // only place the two tonics are compared — the octave correction below
+        // moves both components together, so the interval stays one that can
+        // actually be spelled.
+        let plain = Interval {
+            steps: to.step as i32 - from.step as i32,
+            semitones: to.tonic().chroma() - from.tonic().chroma(),
         };
 
         match direction {
-            TransposeDirection::Up => up,
-            TransposeDirection::Down => down,
+            // A target that sounds the same as the source is a respelling: no
+            // direction has anywhere to move it.
+            _ if plain.semitones == 0 => plain,
+            TransposeDirection::Up if plain.semitones < 0 => plain.shifted(1),
+            TransposeDirection::Up => plain,
+            TransposeDirection::Down if plain.semitones > 0 => plain.shifted(-1),
+            TransposeDirection::Down => plain,
             TransposeDirection::Nearest => {
-                if down.distance() < up.distance() {
-                    down
+                let other = plain.shifted(if plain.semitones > 0 { -1 } else { 1 });
+                if other.distance() < plain.distance() {
+                    other
                 } else {
-                    up
+                    plain
                 }
             }
         }
@@ -662,6 +827,45 @@ mod tests {
 
         // A minor third up is the shorter way round.
         assert_eq!(Interval::between(&d, &f, TransposeDirection::Nearest), up);
+    }
+
+    #[test]
+    fn an_octave_correction_moves_both_halves_of_an_interval() {
+        // From C sharp major down to C major: the step count has to follow the
+        // octave the semitones land in, or the result is spelled as a C with a
+        // pile of sharps instead of a C natural.
+        let cis = Key::parse("cis major").unwrap();
+        let c = Key::parse("c major").unwrap();
+
+        let down = Interval::between(&cis, &c, TransposeDirection::Down);
+        assert_eq!(Pitch::new(0, 1, 4).transposed(down), Pitch::new(0, 0, 4));
+
+        let up = Interval::between(&cis, &c, TransposeDirection::Up);
+        assert_eq!(Pitch::new(0, 1, 4).transposed(up), Pitch::new(0, 0, 5));
+    }
+
+    #[test]
+    fn two_spellings_of_the_same_key_only_respell_the_music() {
+        // G flat major and F sharp major sound alike, so there is nothing to
+        // move in either direction — only the spelling changes.
+        let ges = Key::parse("ges major").unwrap();
+        let fis = Key::parse("fis major").unwrap();
+
+        for direction in [
+            TransposeDirection::Up,
+            TransposeDirection::Down,
+            TransposeDirection::Nearest,
+        ] {
+            let interval = Interval::between(&ges, &fis, direction);
+            assert_eq!(interval.semitones, 0, "{} moved the music", direction);
+            // ges' becomes fis', the same sound written differently.
+            assert_eq!(
+                Pitch::new(4, -1, 4).transposed(interval),
+                Pitch::new(3, 1, 4),
+                "{}",
+                direction
+            );
+        }
     }
 
     #[test]

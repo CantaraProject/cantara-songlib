@@ -44,8 +44,8 @@
 
 use crate::chords::transpose_chordmode;
 use crate::music::{
-    Interval, Key, parse_note_name, parse_octave_marks, Pitch, resolve_relative_octave,
-    TransposeDirection,
+    command_takes_arguments, is_token_delimiter, parse_key_with_explicit_mode, parse_note_token,
+    resolve_relative_octave, skip_command_arguments, Interval, Key, Pitch, TransposeDirection,
 };
 use crate::song::{Song, SongPartContentType};
 
@@ -69,7 +69,7 @@ pub fn transpose_song(
     target_key: &str,
     direction: TransposeDirection,
 ) -> Result<Song, String> {
-    let target = Key::parse(target_key)
+    let (target, mode_was_given) = parse_key_with_explicit_mode(target_key)
         .ok_or_else(|| format!("'{}' is not a key I can read", target_key))?;
 
     let source_text = song.score.key.as_deref().ok_or_else(|| {
@@ -77,6 +77,24 @@ pub fn transpose_song(
     })?;
     let source = Key::parse(source_text)
         .ok_or_else(|| format!("the song's key '{}' is not one I can read", source_text))?;
+
+    // Transposing shifts every note by the same interval, which leaves the
+    // mode where it was: a major song stays major. A target that only names a
+    // tonic therefore takes the song's own mode — `F` for a song in D minor
+    // means F minor — while a target that insists on another mode is asking
+    // for something else entirely and is better refused than answered with a
+    // key signature that contradicts the notes under it.
+    let target = match mode_was_given {
+        true if target.mode != source.mode => {
+            return Err(format!(
+                "transposing moves every note by the same interval, so a song in {} \
+                 cannot become one in {}; name a key in {} instead",
+                source, target, source.mode
+            ));
+        }
+        true => target,
+        false => target.with_mode(&source.mode),
+    };
 
     let interval = Interval::between(&source, &target, direction);
 
@@ -99,11 +117,6 @@ pub fn transpose_song(
     }
 
     Ok(transposed)
-}
-
-/// Characters that end a note token — the same set the ABC exporter uses.
-fn is_token_delimiter(c: char) -> bool {
-    c.is_whitespace() || matches!(c, '|' | '(' | ')' | '<' | '>' | '\\' | '"' | '[' | ']' | '{' | '}')
 }
 
 /// Where a `\relative` melody has got to, on both sides of the transposition.
@@ -140,8 +153,49 @@ impl RelativeCursor {
     }
 }
 
-/// Commands whose argument is a note name and must not be read as one.
-const COMMANDS_WITH_PITCH_ARGUMENT: [&str; 2] = ["key", "transposition"];
+/// Transpose the tonic of an inline `\key` change.
+///
+/// The key signature in the middle of a melody has to move with the notes
+/// around it: `\key g \major` in a melody transposed a whole tone up is
+/// `\key a \major`, or the signature would contradict the notes under it.
+///
+/// Returns where the tonic starts and what it becomes, where there was one to
+/// read, together with the byte index just past the argument. The tonic is
+/// written in absolute spelling and does not touch the `\relative` cursor — it
+/// is a key, not a note of the melody.
+fn transpose_key_argument(
+    content: &str,
+    from: usize,
+    interval: Interval,
+) -> (Option<(usize, String)>, usize) {
+    let remainder = &content[from..];
+    let leading = remainder.len() - remainder.trim_start().len();
+    let start = from + leading;
+
+    let token_end = content[start..]
+        .find(|c: char| is_token_delimiter(c))
+        .map(|offset| start + offset)
+        .unwrap_or(content.len());
+    let token = &content[start..token_end];
+
+    match parse_note_token(token) {
+        Some((step, alter, marks, consumed)) => {
+            let tonic = Pitch::new(step, alter, KEY_REFERENCE_OCTAVE + marks)
+                .transposed(interval)
+                .to_lilypond(KEY_REFERENCE_OCTAVE);
+            (
+                Some((start, format!("{}{}", tonic, &token[consumed..]))),
+                token_end,
+            )
+        }
+        // Not a tonic we can read; leave it alone rather than guess.
+        None => (None, token_end),
+    }
+}
+
+/// The octave a key's tonic is written in. A key signature has no octave, so
+/// the tonic is spelled without marks.
+const KEY_REFERENCE_OCTAVE: i32 = 3;
 
 /// Transpose LilyPond voice content, leaving everything that is not a pitch
 /// exactly as it was.
@@ -161,7 +215,6 @@ pub(crate) fn transpose_voice(content: &str, interval: Interval) -> String {
         return content.to_string();
     }
 
-    let bytes = content.as_bytes();
     let mut output = String::with_capacity(content.len());
     let mut copied = 0usize;
     let mut index = 0usize;
@@ -171,9 +224,12 @@ pub(crate) fn transpose_voice(content: &str, interval: Interval) -> String {
     // until the chord closes.
     let mut chord_first: Option<Option<(Pitch, Pitch)>> = None;
 
-    while index < content.len() {
+    while let Some(current) = content[index..].chars().next() {
         let rest = &content[index..];
-        let current = bytes[index] as char;
+        // Anything this loop does not recognise is stepped over whole: a byte
+        // at a time would land inside a multi-byte character and the next
+        // slice would panic.
+        let skip_one = index + current.len_utf8();
 
         match current {
             '%' => index += rest.find('\n').unwrap_or(rest.len()),
@@ -187,25 +243,29 @@ pub(crate) fn transpose_voice(content: &str, interval: Interval) -> String {
                     .find(|c: char| !c.is_ascii_alphabetic())
                     .unwrap_or(rest.len() - 1);
                 let command = &rest[1..1 + name_length];
-                index += 1 + name_length.max(1);
+                index = skip_one + name_length;
 
-                if matches!(command, "set" | "unset" | "override" | "revert") {
-                    // Their arguments run to the end of the line and may look
-                    // like note names (`\set Staff.instrumentName = …`).
-                    index += content[index..].find('\n').unwrap_or(content.len() - index);
-                } else if COMMANDS_WITH_PITCH_ARGUMENT.contains(&command) {
-                    // `\key d \major`: the tonic is not part of the melody.
-                    let remainder = &content[index..];
-                    let leading = remainder.len() - remainder.trim_start().len();
-                    let argument = remainder[leading..]
-                        .find(|c: char| is_token_delimiter(c))
-                        .unwrap_or(remainder.len() - leading);
-                    index += leading + argument;
+                if command == "key" {
+                    // An inline key change has to move with the music, or the
+                    // local key signature contradicts the notes under it.
+                    let (rewritten, after) = transpose_key_argument(content, index, interval);
+                    if let Some((start, tonic)) = rewritten {
+                        output.push_str(&content[copied..start]);
+                        output.push_str(&tonic);
+                        copied = after;
+                    }
+                    index = after;
+                } else if command_takes_arguments(command) {
+                    // `\clef bass`, `\set Staff.autoBeaming = ##f`: their
+                    // arguments read like music without being music. Only the
+                    // arguments are skipped — notes may follow on the same
+                    // line.
+                    index = skip_command_arguments(content, command, index);
                 }
             }
             '<' => {
                 chord_first = Some(None);
-                index += 1;
+                index = skip_one;
             }
             '>' => {
                 if let Some(Some((first_input, first_output))) = chord_first {
@@ -213,7 +273,7 @@ pub(crate) fn transpose_voice(content: &str, interval: Interval) -> String {
                     cursor.output = first_output;
                 }
                 chord_first = None;
-                index += 1;
+                index = skip_one;
             }
             c if c.is_ascii_alphabetic() => {
                 let token_length = rest
@@ -224,13 +284,14 @@ pub(crate) fn transpose_voice(content: &str, interval: Interval) -> String {
                 index += token_length;
 
                 // A rest (`r`, `R`, `s`) carries no pitch, and a word that is
-                // no note name at all (`treble`, `volta`) is left alone.
-                if token.starts_with(['r', 'R', 's']) || parse_note_name(token).is_none() {
+                // not a note from end to end (`treble`, `volta`, `Allegro`) is
+                // no note of this melody either.
+                if token.starts_with(['r', 'R', 's']) {
                     continue;
                 }
-
-                let (step, alter, name_length) = parse_note_name(token).unwrap();
-                let (marks, mark_length) = parse_octave_marks(&token[name_length..]);
+                let Some((step, alter, marks, consumed)) = parse_note_token(token) else {
+                    continue;
+                };
 
                 let name = cursor.transpose_note(step, alter, marks, interval);
                 // LilyPond measures the note after a chord against the chord's
@@ -242,10 +303,10 @@ pub(crate) fn transpose_voice(content: &str, interval: Interval) -> String {
 
                 output.push_str(&content[copied..start]);
                 output.push_str(&name);
-                output.push_str(&token[name_length + mark_length..]);
+                output.push_str(&token[consumed..]);
                 copied = index;
             }
-            _ => index += 1,
+            _ => index = skip_one,
         }
     }
 
@@ -322,12 +383,90 @@ mod tests {
     }
 
     #[test]
-    fn a_key_change_inside_a_melody_is_not_read_as_a_note() {
+    fn a_key_change_inside_a_melody_moves_with_it() {
         let up = interval("c major", "d major", TransposeDirection::Up);
-        // The `d` after `\key` is the tonic, not the first note.
+        // The `d` after `\key` is a tonic, not the first note of the melody —
+        // but it still has to move, or the signature would contradict the
+        // notes under it.
         assert_eq!(
             transpose_voice("\\key d \\major c4 d", up),
-            "\\key d \\major d4 e"
+            "\\key e \\major d4 e"
+        );
+        // The tonic is spelled for the key it lands in, not as an accidental.
+        let down = interval("c major", "bes major", TransposeDirection::Down);
+        assert_eq!(
+            transpose_voice("\\key g \\minor c4", down),
+            "\\key f \\minor bes4"
+        );
+    }
+
+    #[test]
+    fn a_tie_without_spaces_separates_two_notes() {
+        let up = interval("c major", "d major", TransposeDirection::Up);
+        // `~` binds the notes without a space, so it has to end the token as
+        // well — otherwise the second note is never looked at and the tie ends
+        // up joining two different pitches.
+        assert_eq!(transpose_voice("c4~c4 e2~e2", up), "d4~d4 fis2~fis2");
+    }
+
+    #[test]
+    fn a_word_that_merely_starts_like_a_note_is_left_alone() {
+        let up = interval("c major", "d major", TransposeDirection::Up);
+        // `bass` starts with a note letter; writing `cisass` into the score
+        // would make it invalid LilyPond.
+        assert_eq!(
+            transpose_voice("\\clef bass c4 d", up),
+            "\\clef bass d4 e"
+        );
+        assert_eq!(
+            transpose_voice("\\mark \\markup { Allegro } c4", up),
+            "\\mark \\markup { Allegro } d4"
+        );
+        // Nor may such a word move the `\relative` cursor: the note after it
+        // is measured from the note before it.
+        assert_eq!(
+            transpose_voice("c4 \\clef alto g4", up),
+            "d4 \\clef alto a4"
+        );
+    }
+
+    #[test]
+    fn a_property_command_only_swallows_its_own_arguments() {
+        let up = interval("c major", "d major", TransposeDirection::Up);
+        // The melody carries on on the same line, so only the property and its
+        // value may be skipped.
+        assert_eq!(
+            transpose_voice("\\set Staff.autoBeaming = ##f c4 d e f", up),
+            "\\set Staff.autoBeaming = ##f d4 e fis g"
+        );
+        // A Scheme value in parentheses is one argument, not several words.
+        assert_eq!(
+            transpose_voice("\\override Stem.direction = #'() c4", up),
+            "\\override Stem.direction = #'() d4"
+        );
+        assert_eq!(
+            transpose_voice("\\unset ignoreMelismata c4", up),
+            "\\unset ignoreMelismata d4"
+        );
+    }
+
+    #[test]
+    fn text_outside_the_ascii_range_does_not_derail_the_scan() {
+        let up = interval("c major", "d major", TransposeDirection::Up);
+        // A non-breaking space between the notes, and an umlaut in a markup:
+        // stepping over either one byte at a time would land inside the
+        // character and panic on the next slice.
+        assert_eq!(
+            transpose_voice("c4\u{a0}e4", up),
+            "d4\u{a0}fis4"
+        );
+        assert_eq!(
+            transpose_voice("\\mark \\markup { Ä } c4", up),
+            "\\mark \\markup { Ä } d4"
+        );
+        assert_eq!(
+            transpose_voice("c4 % Überleitung\ne4", up),
+            "d4 % Überleitung\nfis4"
         );
     }
 
@@ -390,6 +529,29 @@ mod tests {
                 .collect::<Vec<String>>()
         };
         assert_eq!(lyrics(&transposed), lyrics(&song));
+    }
+
+    #[test]
+    fn a_bare_tonic_keeps_the_song_in_its_own_mode() {
+        let mut song = tochter_zion();
+        song.score.key = Some("d minor".to_string());
+
+        // "F" names a tonic and says nothing about the mode, so the song stays
+        // minor instead of being relabelled as major.
+        let transposed = transpose_song(&song, "F", TransposeDirection::Up).unwrap();
+        assert_eq!(transposed.score.key.as_deref(), Some("f minor"));
+    }
+
+    #[test]
+    fn a_target_mode_that_contradicts_the_song_is_refused() {
+        let song = tochter_zion();
+        let error = transpose_song(&song, "d minor", TransposeDirection::Nearest).unwrap_err();
+        assert!(error.contains("d major"), "{}", error);
+        assert!(error.contains("d minor"), "{}", error);
+
+        // The same mode is fine, however it is spelled.
+        assert!(transpose_song(&song, "F#m", TransposeDirection::Up).is_err());
+        assert!(transpose_song(&song, "fis major", TransposeDirection::Up).is_ok());
     }
 
     #[test]

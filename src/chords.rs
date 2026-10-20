@@ -13,8 +13,9 @@
 //! sits in the source text.
 
 use crate::music::{
-    Frac, Interval, note_name_to_lilypond, parse_lilypond_duration, parse_note_name,
-    parse_octave_marks, Pitch, STEP_LETTERS,
+    command_takes_arguments, is_token_delimiter, note_name_to_lilypond, parse_lilypond_duration,
+    parse_note_name, parse_octave_marks, skip_command_arguments, Frac, Interval, Pitch,
+    STEP_LETTERS,
 };
 
 /// The octave an unmarked note name denotes in LilyPond's absolute mode: the
@@ -67,23 +68,33 @@ fn is_modifier_char(c: char) -> bool {
     c.is_ascii_alphanumeric() || matches!(c, '.' | '+' | '-' | '^')
 }
 
+/// Whether a chord token ends here: at a delimiter, or at the end of the line.
+fn ends_the_token(remainder: &str) -> bool {
+    match remainder.chars().next() {
+        None => true,
+        Some(c) => is_token_delimiter(c) || c == ':',
+    }
+}
+
 /// Parse a chord line written in LilyPond `\chordmode` syntax.
 ///
 /// Durations behave as they do in LilyPond: a chord without one lasts as long
 /// as the chord before it. `\commands`, comments and anything else the chord
 /// line carries are skipped — they neither sound nor take time.
 pub(crate) fn parse_chordmode(content: &str) -> Vec<ChordItem> {
-    let bytes = content.as_bytes();
     let mut items: Vec<ChordItem> = Vec::new();
     let mut index = 0usize;
     let mut last_duration = Frac::new(1, 4);
 
-    while index < content.len() {
+    while let Some(current) = content[index..].chars().next() {
         let rest = &content[index..];
-        let current = bytes[index] as char;
+        // Anything this loop does not recognise is stepped over whole: a byte
+        // at a time would land inside a multi-byte character and the next
+        // slice would panic.
+        let skip_one = index + current.len_utf8();
 
         if current.is_whitespace() {
-            index += 1;
+            index = skip_one;
             continue;
         }
 
@@ -93,17 +104,21 @@ pub(crate) fn parse_chordmode(content: &str) -> Vec<ChordItem> {
                 index += rest.find('\n').unwrap_or(rest.len());
             }
             '\\' => {
-                // A command (`\global`, `\set …`) and its arguments on this
-                // line carry no chord.
-                let end = rest[1..]
+                let name_length = rest[1..]
                     .find(|c: char| !c.is_ascii_alphabetic())
-                    .map(|offset| index + 1 + offset)
-                    .unwrap_or(content.len());
-                index = end.max(index + 1);
+                    .unwrap_or(rest.len() - 1);
+                let command = &rest[1..1 + name_length];
+                index = skip_one + name_length;
+                // `\global` and friends carry nothing; a command with
+                // arguments has to have them skipped, or the letters in
+                // `\set chordChanges = ##t` would be read as chords.
+                if command_takes_arguments(command) {
+                    index = skip_command_arguments(content, command, index);
+                }
             }
             '|' => {
                 let start = index;
-                while index < content.len() && bytes[index] == b'|' {
+                while content[index..].starts_with('|') {
                     index += 1;
                 }
                 items.push(ChordItem {
@@ -123,10 +138,10 @@ pub(crate) fn parse_chordmode(content: &str) -> Vec<ChordItem> {
                             span: (start, index),
                         });
                     }
-                    None => index += 1,
+                    None => index = skip_one,
                 }
             }
-            _ => index += 1,
+            _ => index = skip_one,
         }
     }
 
@@ -147,7 +162,7 @@ fn parse_chord_token(
             .take_while(|c| c.is_ascii_digit() || *c == '.')
             .collect();
         let after = &text[1 + digits.len()..];
-        if after.is_empty() || after.starts_with(|c: char| c.is_whitespace() || c == '|') {
+        if ends_the_token(after) {
             let duration = parse_lilypond_duration(&digits).unwrap_or(*last_duration);
             *last_duration = duration;
             return Some((ChordKind::Rest, duration, 1 + digits.len()));
@@ -203,6 +218,14 @@ fn parse_chord_token(
     if !tie && text[consumed..].starts_with('~') {
         tie = true;
         consumed += 1;
+    }
+
+    // Everything the chord could carry has been read, so whatever is left has
+    // to end the token. `parse_note_name` matches a prefix, and without this
+    // check the `b` of a `\clef bass` that slipped into a chord line would
+    // become a B major chord with `ass` trailing behind it.
+    if !ends_the_token(&text[consumed..]) {
+        return None;
     }
 
     let duration = parse_lilypond_duration(&duration_text).unwrap_or(*last_duration);
@@ -512,6 +535,34 @@ mod tests {
     }
 
     // --- Symbols --------------------------------------------------------
+
+    #[test]
+    fn a_property_command_carries_no_chord_either() {
+        // The letters of `chordChanges` are no more chords than the `e` in
+        // "tempo" is, and the chords after it keep their place in the bar.
+        assert_eq!(
+            symbols("\\set chordChanges = ##t d1 | a1"),
+            vec!["D", "A"]
+        );
+        let chords = chords_from_content("\\set chordChanges = ##t d1 | a1");
+        assert_eq!(chords[1].start, Frac::new(1, 1));
+    }
+
+    #[test]
+    fn a_word_that_merely_starts_like_a_chord_is_no_chord() {
+        // `bass` begins with a note letter without being one.
+        assert_eq!(symbols("\\clef bass d1"), vec!["D"]);
+    }
+
+    #[test]
+    fn text_outside_the_ascii_range_does_not_derail_the_scan() {
+        // A non-breaking space between the chords, and an umlaut in a comment:
+        // stepping over either one byte at a time would land inside the
+        // character and panic on the next slice.
+        assert_eq!(symbols("d1\u{a0}a1"), vec!["D", "A"]);
+        assert_eq!(symbols("% Überleitung\nd1 a1"), vec!["D", "A"]);
+        assert_eq!(symbols("\\mark \\markup { Ä } d1"), vec!["D"]);
+    }
 
     #[test]
     fn qualities_become_chord_symbols() {

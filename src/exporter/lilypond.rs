@@ -334,18 +334,12 @@ fn find_lyrics(part: &SongPart) -> Option<&SongPartContent> {
     part.contents.iter().find(|c| c.content_type.is_lyrics())
 }
 
-/// The chord line a part carries itself, if any.
-fn find_chords(part: &SongPart) -> Option<&SongPartContent> {
-    part.contents
-        .iter()
-        .find(|c| matches!(c.content_type, SongPartContentType::Chords))
-}
-
-/// The chord line that goes with a part's melody.
+/// The chord line that goes with a part's melody, unless chords are switched
+/// off.
 ///
-/// A part that reuses another part's melody — verse 2 singing verse 1's tune —
-/// is sung over that part's chords as well, so the chords are inherited the
-/// same way the melody is.
+/// The chords are looked up through [`Song::chords_for_part`], so a part that
+/// reuses another part's melody — verse 2 singing verse 1's tune — is sung
+/// over that part's chords as well, however long the chain of repetitions is.
 fn chords_for_part<'a>(
     song: &'a Song,
     part: &'a SongPart,
@@ -354,12 +348,20 @@ fn chords_for_part<'a>(
     if !settings.include_chords {
         return None;
     }
-    find_chords(part).or_else(|| {
-        part.is_repetition_of
-            .as_ref()
-            .and_then(|id| song.part(id))
-            .and_then(find_chords)
-    })
+    song.chords_for_part(part)
+}
+
+/// A spacer as long as a stretch of voice content, for a part whose harmony is
+/// not written down.
+///
+/// LilyPond takes a scaled duration (`s1*3/4`), so any length can be spelled
+/// with a single spacer.
+fn chordmode_spacer(voice_content: &str) -> String {
+    let duration = crate::exporter::abc::voice_duration(voice_content);
+    if duration.is_zero() {
+        return String::new();
+    }
+    format!("s1*{}", duration)
 }
 
 /// A `\chordmode` variable definition.
@@ -946,23 +948,40 @@ pub fn lilypond_from_song(song: &Song, settings: &LilypondSettings) -> Result<St
     // its own, the refrain melody after it (or before it, for a refrain-first
     // song). One `\chordmode` block runs underneath all of it, so the chord
     // lines are joined in exactly that order.
+    //
+    // A part whose harmony is not written down still takes time on the staff,
+    // so it leaves a gap rather than nothing: filling that gap with a spacer
+    // is what keeps the chords of the part behind it above the notes they
+    // belong to. Two parts that happen to carry the same chords keep both
+    // copies for the same reason.
     let stanza_chords = chords_for_part(song, stanza_part, settings);
     let refrain_chords = refrain_own_part.and_then(|part| chords_for_part(song, part, settings));
-    let mut chord_lines: Vec<&str> = match (refrain_own_voice.is_some(), is_refrain_first) {
-        (true, true) => vec![refrain_chords, stanza_chords],
-        (true, false) => vec![stanza_chords, refrain_chords],
-        // Without its own melody the refrain is sung to the stanza music, so
-        // the stanza's chords are the whole chord line.
-        (false, _) => vec![stanza_chords],
-    }
-    .into_iter()
-    .flatten()
-    .map(|chords| chords.content.trim())
-    .filter(|content| !content.is_empty())
-    .collect();
-    chord_lines.dedup();
+    let sections: Vec<(Option<&SongPartContent>, &str)> =
+        match (refrain_own_voice, is_refrain_first) {
+            (Some(refrain_voice), true) => vec![
+                (refrain_chords, refrain_voice.content.as_str()),
+                (stanza_chords, stanza_voice.content.as_str()),
+            ],
+            (Some(refrain_voice), false) => vec![
+                (stanza_chords, stanza_voice.content.as_str()),
+                (refrain_chords, refrain_voice.content.as_str()),
+            ],
+            // Without its own melody the refrain is sung to the stanza music,
+            // so the stanza's chords are the whole chord line.
+            (None, _) => vec![(stanza_chords, stanza_voice.content.as_str())],
+        };
 
-    let has_chords = !chord_lines.is_empty();
+    let has_chords = sections
+        .iter()
+        .any(|(chords, _)| chords.is_some_and(|chords| !chords.content.trim().is_empty()));
+    let chord_lines: Vec<String> = sections
+        .iter()
+        .map(|(chords, voice)| match chords {
+            Some(chords) if !chords.content.trim().is_empty() => chords.content.trim().to_string(),
+            _ => chordmode_spacer(voice),
+        })
+        .collect();
+
     let chord_content = indent_lines(&chord_lines.join("\n"), "  ");
 
     // --- Step 8: Build template data and render ---

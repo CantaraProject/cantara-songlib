@@ -22,8 +22,8 @@
 
 use crate::chords::{chords_from_content, TimedChord};
 use crate::music::{
-    key_alterations, parse_lilypond_duration, parse_note_name, parse_octave_marks,
-    resolve_relative_octave, Frac, Key, Pitch, STEP_LETTERS,
+    is_token_delimiter, key_alterations, parse_lilypond_duration, parse_note_name,
+    parse_note_token, parse_octave_marks, resolve_relative_octave, Frac, Key, Pitch, STEP_LETTERS,
 };
 use crate::song::{Song, SongPart, SongPartContent, SongPartContentType};
 
@@ -110,10 +110,6 @@ fn lilypond_bar_to_abc(bar: &str) -> String {
     }
 }
 
-/// Characters that end a note token.
-fn is_token_delimiter(c: char) -> bool {
-    c.is_whitespace() || matches!(c, '|' | '(' | ')' | '<' | '>' | '\\' | '"' | '[' | ']')
-}
 
 /// Parse LilyPond voice content into a list of `MusicEvent`s.
 ///
@@ -143,6 +139,12 @@ fn parse_voice(content: &str) -> Vec<MusicEvent> {
         }
 
         match current {
+            '%' => {
+                // A comment runs to the end of the line and holds no music.
+                while index < chars.len() && chars[index] != '\n' {
+                    index += 1;
+                }
+            }
             '\\' => {
                 index += 1;
                 let start = index;
@@ -312,10 +314,9 @@ fn parse_note_or_rest(
         }
     }
 
-    let (step, alter, consumed) = parse_note_name(token)?;
-
-    let (octave_marks, mark_length) = parse_octave_marks(&token[consumed..]);
-    let rest_index = consumed + mark_length;
+    // A word that is no note from end to end — `treble` after a `\clef`, a
+    // word of a comment — is none of this melody's notes either.
+    let (step, alter, octave_marks, rest_index) = parse_note_token(token)?;
 
     let octave = resolve_relative_octave(previous_pitch, step, octave_marks);
     let pitch = Pitch::new(step, alter, octave);
@@ -331,6 +332,23 @@ fn parse_note_or_rest(
         slur_start: false,
         slur_end: false,
     })
+}
+
+/// How long a stretch of LilyPond voice content lasts, as a fraction of a
+/// whole note.
+///
+/// The LilyPond exporter needs this to fill the gap a part without chords
+/// leaves in the chord line above the staff: the chords of the part after it
+/// have to start where its music ends, not where the staff begins.
+pub(crate) fn voice_duration(content: &str) -> Frac {
+    parse_voice(content)
+        .iter()
+        .fold(Frac::zero(), |total, event| match event {
+            MusicEvent::Note { duration, .. } | MusicEvent::Rest { duration, .. } => {
+                total.add(*duration)
+            }
+            MusicEvent::Barline(_) | MusicEvent::ChordSymbol(_) => total,
+        })
 }
 
 // ---------------------------------------------------------------------------
@@ -366,48 +384,108 @@ fn insert_chord_symbols(events: Vec<MusicEvent>, chords: &[TimedChord]) -> Vec<M
             }
         };
 
-        // Every chord that starts before this note ends goes on it. More than
-        // one can only happen when the chords change faster than the melody
-        // moves, and then the last of them is the one still sounding.
         let end = time.add(duration);
-        let mut pending: Option<&TimedChord> = None;
+        let mut remainder = event;
+        let mut played = Frac::zero();
+
         while let Some(chord) = chords.get(next) {
             if chord.start.at_least(end) {
                 break;
             }
-            pending = Some(chord);
             next += 1;
-        }
-        if let Some(chord) = pending {
+
+            // A chord that starts while the note is still sounding is shown
+            // where it starts: the note is cut in two and tied back together,
+            // which is how a lead sheet writes a harmony change under a held
+            // note. The second half continues a tie, so it sings no syllable
+            // of its own and the lyrics stay where they were.
+            //
+            // `Frac::sub` saturates, so a chord that starts at or before this
+            // note simply has nothing to cut.
+            let offset = chord.start.sub(time);
+            let gap = offset.sub(played);
+            if !gap.is_zero()
+                && let Some((sounded, rest)) = split_event(&remainder, gap)
+            {
+                result.push(sounded);
+                remainder = rest;
+                played = offset;
+            }
+
             result.push(MusicEvent::ChordSymbol(chord.symbol.clone()));
         }
 
-        result.push(event);
-        time = time.add(duration);
+        result.push(remainder);
+        time = end;
     }
 
     result
 }
 
+/// Cut a note or a rest in two after `first`, tying the halves together.
+///
+/// The two halves sound exactly as the undivided event did: a tie makes the
+/// second half a continuation rather than a new attack, and [`slot_flags`]
+/// therefore gives it no syllable of its own.
+///
+/// Returns `None` for an event that takes no time — there is nothing to cut —
+/// and for a cut that would not leave both halves something to sound.
+fn split_event(event: &MusicEvent, first: Frac) -> Option<(MusicEvent, MusicEvent)> {
+    match event {
+        MusicEvent::Note {
+            pitches,
+            duration,
+            tie,
+            slur_start,
+            slur_end,
+        } if duration.at_least(first) && !duration.sub(first).is_zero() => Some((
+            MusicEvent::Note {
+                pitches: pitches.clone(),
+                duration: first,
+                // The halves belong to one sounding note.
+                tie: true,
+                slur_start: *slur_start,
+                slur_end: false,
+            },
+            MusicEvent::Note {
+                pitches: pitches.clone(),
+                duration: duration.sub(first),
+                tie: *tie,
+                slur_start: false,
+                slur_end: *slur_end,
+            },
+        )),
+        MusicEvent::Rest { duration, visible }
+            if duration.at_least(first) && !duration.sub(first).is_zero() =>
+        {
+            Some((
+                MusicEvent::Rest {
+                    duration: first,
+                    visible: *visible,
+                },
+                MusicEvent::Rest {
+                    duration: duration.sub(first),
+                    visible: *visible,
+                },
+            ))
+        }
+        _ => None,
+    }
+}
+
 /// The chord line that goes with a part's melody, laid out in time.
 ///
-/// A part that has no chords of its own borrows them from the part whose
-/// melody it reuses — verse 2 sings verse 1's tune over verse 1's chords.
+/// The chords are looked up through [`Song::chords_for_part`], so a part that
+/// has none of its own is sung over the chords of the part whose melody it
+/// reuses — however long the chain of repetitions is, just as the melody
+/// itself is inherited.
 fn chords_for_part(song: &Song, part: &SongPart, settings: &AbcSettings) -> Vec<TimedChord> {
     if !settings.include_chords {
         return Vec::new();
     }
 
-    let own = part
-        .content(&SongPartContentType::Chords)
-        .or_else(|| {
-            part.is_repetition_of
-                .as_ref()
-                .and_then(|id| song.part(id))
-                .and_then(|source| source.content(&SongPartContentType::Chords))
-        });
-
-    own.map(|content| chords_from_content(&content.content))
+    song.chords_for_part(part)
+        .map(|content| chords_from_content(&content.content))
         .unwrap_or_default()
 }
 
@@ -533,10 +611,25 @@ fn render_events(
     unit: Frac,
     bar: &mut BarAccidentals,
 ) -> String {
+    render_events_from_chord(events, key, unit, bar, None)
+}
+
+/// Render a slice of events, starting from a chord that is already sounding.
+///
+/// `sounding` is printed on the first note, which is what an excerpt torn out
+/// of the middle of a song needs: the chord it starts under was last written
+/// on a phrase the reader cannot see.
+fn render_events_from_chord(
+    events: &[MusicEvent],
+    key: &[i8; 7],
+    unit: Frac,
+    bar: &mut BarAccidentals,
+    sounding: Option<String>,
+) -> String {
     let mut pieces: Vec<String> = Vec::new();
     // A chord symbol is written as `"Bm"` glued to the front of its note, so
     // it waits here until that note is rendered.
-    let mut chord: Option<&str> = None;
+    let mut chord: Option<&str> = sounding.as_deref();
 
     for event in events {
         match event {
@@ -1615,9 +1708,24 @@ impl PartPhrases {
         let mut body = String::new();
         let flags = slot_flags(&self.events);
 
+        // An excerpt is a tune of its own: whoever reads it cannot see the
+        // phrases before it, so the chord that is still sounding at its first
+        // note has to be printed again even though the full export leaves a
+        // held chord unrepeated.
+        let mut carried = self.chord_in_force(self.segments[lines.start].0);
+
         for index in lines.clone() {
             let (start, end, slots) = self.segments[index];
-            let music = render_events(&self.events[start..end], &self.key, self.unit, &mut bar);
+            let music = match carried.take() {
+                Some(chord) => render_events_from_chord(
+                    &self.events[start..end],
+                    &self.key,
+                    self.unit,
+                    &mut bar,
+                    Some(chord),
+                ),
+                None => render_events(&self.events[start..end], &self.key, self.unit, &mut bar),
+            };
             if music.trim().is_empty() {
                 continue;
             }
@@ -1652,6 +1760,20 @@ impl PartPhrases {
         }
 
         Some(format!("{}{}", self.header, body))
+    }
+
+    /// The chord still sounding when the event at `index` is reached, unless
+    /// that event is itself preceded by a chord symbol — then the excerpt
+    /// states its own harmony and nothing has to be carried in.
+    fn chord_in_force(&self, index: usize) -> Option<String> {
+        if matches!(self.events.get(index), Some(MusicEvent::ChordSymbol(_))) {
+            return None;
+        }
+
+        self.events[..index].iter().rev().find_map(|event| match event {
+            MusicEvent::ChordSymbol(symbol) => Some(symbol.clone()),
+            _ => None,
+        })
     }
 
     /// How many syllables the phrases in `lines` carry in total.
@@ -1950,6 +2072,28 @@ mod tests {
             })
             .collect();
         assert_eq!(durations, vec![Frac::new(1, 8); 4]);
+    }
+
+    #[test]
+    fn prose_in_a_melody_does_not_become_notes() {
+        // A clef name and a comment both hold letters that start like notes.
+        let events = parse_voice("\\clef bass c4 % the refrain\nd4");
+        let pitches: Vec<Pitch> = events
+            .iter()
+            .filter_map(|event| match event {
+                MusicEvent::Note { pitches, .. } => Some(pitches[0]),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(pitches.len(), 2, "{:?}", events);
+    }
+
+    #[test]
+    fn a_voices_length_is_the_sum_of_its_notes() {
+        assert_eq!(voice_duration("c4 d e f"), Frac::new(1, 1));
+        assert_eq!(voice_duration("c'4 d e f | g2 g2 |"), Frac::new(2, 1));
+        assert_eq!(voice_duration("c2. r4"), Frac::new(1, 1));
+        assert_eq!(voice_duration(""), Frac::zero());
     }
 
     // --- Pitches --------------------------------------------------------
