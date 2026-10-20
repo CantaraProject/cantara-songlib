@@ -22,8 +22,9 @@
 
 use crate::chords::{chords_from_content, TimedChord};
 use crate::music::{
-    is_token_delimiter, key_alterations, parse_lilypond_duration, parse_note_name,
-    parse_note_token, parse_octave_marks, resolve_relative_octave, Frac, Key, Pitch, STEP_LETTERS,
+    command_takes_arguments, is_token_delimiter, key_alterations, parse_lilypond_duration,
+    parse_note_name, parse_note_token, parse_octave_marks, resolve_relative_octave,
+    skip_command_arguments, Frac, Key, Pitch, STEP_LETTERS,
 };
 use crate::song::{Song, SongPart, SongPartContent, SongPartContentType};
 
@@ -167,11 +168,13 @@ fn parse_voice(content: &str) -> Vec<MusicEvent> {
                         index += 1; // closing quote
                         events.push(MusicEvent::Barline(lilypond_bar_to_abc(&argument)));
                     }
-                } else if matches!(command.as_str(), "set" | "unset" | "override" | "revert") {
-                    // These carry arguments we cannot use; skip the rest of the line.
-                    while index < chars.len() && chars[index] != '\n' {
-                        index += 1;
-                    }
+                } else if command_takes_arguments(&command) {
+                    let byte_index = chars[..index]
+                        .iter()
+                        .map(|character| character.len_utf8())
+                        .sum();
+                    let skipped = skip_command_arguments(content, &command, byte_index);
+                    index = content[..skipped].chars().count();
                 }
                 // Every other command (\breathe, \global, dynamics, …) is dropped.
             }
@@ -2086,6 +2089,13 @@ mod tests {
             })
             .collect();
         assert_eq!(pitches.len(), 2, "{:?}", events);
+    }
+
+    #[test]
+    fn an_inline_key_does_not_add_its_tonic_to_the_melody() {
+        let events = parse_voice("\\key g \\major fis4 g");
+        assert_eq!(events.iter().filter(|event| event.is_note()).count(), 2);
+        assert_eq!(voice_duration("\\key g \\major fis4 g"), Frac::new(1, 2));
     }
 
     #[test]
