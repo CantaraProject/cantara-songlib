@@ -45,6 +45,9 @@ pub enum FontSetting {
 /// Configuration for LilyPond export output.
 #[derive(Clone, PartialEq, Debug)]
 pub struct LilypondSettings {
+    /// Whether to print chord symbols above the staff, where the song has a
+    /// chord line (default: `true`).
+    pub include_chords: bool,
     /// Paper size for the `\paper` block (default: "a4")
     pub paper_size: String,
     /// Indent setting for `\layout` block (default: "#0")
@@ -58,6 +61,7 @@ pub struct LilypondSettings {
 impl Default for LilypondSettings {
     fn default() -> Self {
         LilypondSettings {
+            include_chords: true,
             paper_size: "a4".to_string(),
             layout_indent: "#0".to_string(),
             font: FontSetting::Default,
@@ -330,6 +334,52 @@ fn find_lyrics(part: &SongPart) -> Option<&SongPartContent> {
     part.contents.iter().find(|c| c.content_type.is_lyrics())
 }
 
+/// The chord line that goes with a part's melody, unless chords are switched
+/// off.
+///
+/// The chords are looked up through [`Song::chords_for_part`], so a part that
+/// reuses another part's melody — verse 2 singing verse 1's tune — is sung
+/// over that part's chords as well, however long the chain of repetitions is.
+fn chords_for_part<'a>(
+    song: &'a Song,
+    part: &'a SongPart,
+    settings: &LilypondSettings,
+) -> Option<&'a SongPartContent> {
+    if !settings.include_chords {
+        return None;
+    }
+    song.chords_for_part(part)
+}
+
+/// A spacer as long as a stretch of voice content, for a part whose harmony is
+/// not written down.
+///
+/// LilyPond takes a scaled duration (`s1*3/4`), so any length can be spelled
+/// with a single spacer.
+fn chordmode_spacer(voice_content: &str) -> String {
+    let duration = crate::exporter::abc::voice_duration(voice_content);
+    if duration.is_zero() {
+        return String::new();
+    }
+    format!("s1*{}", duration)
+}
+
+/// A `\chordmode` variable definition.
+#[derive(Serialize)]
+struct ChordDefinition {
+    var_name: String,
+    content: String,
+}
+
+impl ChordDefinition {
+    fn new(var_name: impl Into<String>, content: &str) -> ChordDefinition {
+        ChordDefinition {
+            var_name: var_name.into(),
+            content: indent_lines(content, "  "),
+        }
+    }
+}
+
 /// Count how many syllable slots a `\lyricmode` block occupies.
 ///
 /// This is what `\skip 1` has to be repeated for when a verse needs to start
@@ -426,6 +476,9 @@ struct SequentialSection {
     label: String,
     voice_ref: String,
     lyrics_ref: String,
+    /// The `\chordmode` variable printed above this section's staff, if the
+    /// part has chords.
+    chords_ref: Option<String>,
     midi_instrument: String,
 }
 
@@ -439,6 +492,7 @@ struct SequentialTemplateData {
     layout_indent: String,
     global_content: String,
     voice_defs: Vec<VoiceDefinition>,
+    chord_defs: Vec<ChordDefinition>,
     lyrics_defs: Vec<LyricsDefinition>,
     sections: Vec<SequentialSection>,
     staff_size: Option<f32>,
@@ -484,6 +538,13 @@ global = {
 }
 
 {{/each}}
+{{#each chord_defs}}
+{{{this.var_name}}} = \chordmode {
+  \global
+{{{this.content}}}
+}
+
+{{/each}}
 {{#each lyrics_defs}}
 {{{this.var_name}}} = \lyricmode {
 {{#if this.stanza}}  \set stanza = "{{{this.stanza}}}"
@@ -495,6 +556,9 @@ global = {
 % === {{{this.label}}} ===
 \score {
   <<
+{{#if this.chords_ref}}
+    \new ChordNames {{{this.chords_ref}}}
+{{/if}}
     \new Staff \with {
       midiInstrument = "{{{this.midi_instrument}}}"
     } { {{{this.voice_ref}}} }
@@ -523,6 +587,8 @@ pub struct LilypondPart {
 struct PartTemplateData {
     version: String,
     global_content: String,
+    /// The part's chord line, when it has one.
+    chords: Option<ChordDefinition>,
     voice_var_name: String,
     voice_content: String,
     voice_ref: String,
@@ -562,6 +628,13 @@ global = {
   \global
 {{{voice_content}}}
 }
+{{#if chords}}
+
+{{{chords.var_name}}} = \chordmode {
+  \global
+{{{chords.content}}}
+}
+{{/if}}
 
 {{{lyrics_var_name}}} = \lyricmode {
 {{#if stanza}}  \set stanza = "{{{stanza}}}"
@@ -570,6 +643,9 @@ global = {
 
 \score {
   <<
+{{#if chords}}
+    \new ChordNames \{{{chords.var_name}}}
+{{/if}}
     \new Staff { {{{voice_ref}}} }
     \addlyrics { {{{lyrics_ref}}} }
   >>
@@ -667,10 +743,10 @@ pub fn lilypond_from_song(song: &Song, settings: &LilypondSettings) -> Result<St
     let parts = song.parts();
 
     // --- Step 1: Find the stanza (verse) voice ---
-    let stanza_voice = parts
+    let (stanza_part, stanza_voice) = parts
         .iter()
         .filter(|p| p.part_type == SongPartType::Verse)
-        .find_map(|part| song.voice_for_part(part))
+        .find_map(|part| song.voice_for_part(part).map(|voice| (part, voice)))
         .ok_or_else(|| "Song has no voice content for LilyPond export".to_string())?;
 
     let base_voice_name = voice_type_to_var_name(&stanza_voice.content_type).to_string();
@@ -685,8 +761,11 @@ pub fn lilypond_from_song(song: &Song, settings: &LilypondSettings) -> Result<St
 
     // A refrain "owns" its voice if the voice content is directly on the part,
     // not inherited from a verse via is_repetition_of.
-    let refrain_own_voice: Option<&SongPartContent> =
-        refrain_parts.iter().find_map(|part| find_own_voice(part));
+    let refrain_own_part: Option<&SongPart> = refrain_parts
+        .iter()
+        .copied()
+        .find(|part| find_own_voice(part).is_some());
+    let refrain_own_voice: Option<&SongPartContent> = refrain_own_part.and_then(find_own_voice);
 
     // The refrain only becomes its own `chorus` lyrics variable if it has its
     // own melody; otherwise it shares the stanza music and is printed as a
@@ -864,17 +943,46 @@ pub fn lilypond_from_song(song: &Song, settings: &LilypondSettings) -> Result<St
         }
     }
 
-    // --- Step 7: Check for chord content ---
-    let chord_content_opt = parts.iter().find_map(|part| {
-        part.contents
-            .iter()
-            .find(|c| matches!(c.content_type, SongPartContentType::Chords))
-            .map(|c| c.content.clone())
-    });
-    let has_chords = chord_content_opt.is_some();
-    let chord_content = chord_content_opt
-        .map(|c| indent_lines(&c, "  "))
-        .unwrap_or_default();
+    // --- Step 7: Collect the chord content ---
+    // The staff carries the stanza melody and, where the refrain has one of
+    // its own, the refrain melody after it (or before it, for a refrain-first
+    // song). One `\chordmode` block runs underneath all of it, so the chord
+    // lines are joined in exactly that order.
+    //
+    // A part whose harmony is not written down still takes time on the staff,
+    // so it leaves a gap rather than nothing: filling that gap with a spacer
+    // is what keeps the chords of the part behind it above the notes they
+    // belong to. Two parts that happen to carry the same chords keep both
+    // copies for the same reason.
+    let stanza_chords = chords_for_part(song, stanza_part, settings);
+    let refrain_chords = refrain_own_part.and_then(|part| chords_for_part(song, part, settings));
+    let sections: Vec<(Option<&SongPartContent>, &str)> =
+        match (refrain_own_voice, is_refrain_first) {
+            (Some(refrain_voice), true) => vec![
+                (refrain_chords, refrain_voice.content.as_str()),
+                (stanza_chords, stanza_voice.content.as_str()),
+            ],
+            (Some(refrain_voice), false) => vec![
+                (stanza_chords, stanza_voice.content.as_str()),
+                (refrain_chords, refrain_voice.content.as_str()),
+            ],
+            // Without its own melody the refrain is sung to the stanza music,
+            // so the stanza's chords are the whole chord line.
+            (None, _) => vec![(stanza_chords, stanza_voice.content.as_str())],
+        };
+
+    let has_chords = sections
+        .iter()
+        .any(|(chords, _)| chords.is_some_and(|chords| !chords.content.trim().is_empty()));
+    let chord_lines: Vec<String> = sections
+        .iter()
+        .map(|(chords, voice)| match chords {
+            Some(chords) if !chords.content.trim().is_empty() => chords.content.trim().to_string(),
+            _ => chordmode_spacer(voice),
+        })
+        .collect();
+
+    let chord_content = indent_lines(&chord_lines.join("\n"), "  ");
 
     // --- Step 8: Build template data and render ---
     let data = LilypondTemplateData {
@@ -921,10 +1029,10 @@ pub fn lilypond_sequential_from_song(
     let parts = song.parts();
 
     // --- Find the stanza (verse) voice ---
-    let stanza_voice = parts
+    let (stanza_part, stanza_voice) = parts
         .iter()
         .filter(|p| p.part_type == SongPartType::Verse)
-        .find_map(|part| song.voice_for_part(part))
+        .find_map(|part| song.voice_for_part(part).map(|voice| (part, voice)))
         .ok_or_else(|| "Song has no voice content for LilyPond export".to_string())?;
 
     let base_voice_name = voice_type_to_var_name(&stanza_voice.content_type).to_string();
@@ -935,8 +1043,12 @@ pub fn lilypond_sequential_from_song(
         .filter(|p| p.part_type == SongPartType::Refrain || p.part_type == SongPartType::Chorus)
         .collect();
 
+    let refrain_own_part: Option<&SongPart> = refrain_parts
+        .iter()
+        .copied()
+        .find(|part| find_own_voice(part).is_some());
     let refrain_own_voice: Option<&SongPartContent> =
-        refrain_parts.iter().find_map(|part| find_own_voice(part));
+        refrain_own_part.and_then(find_own_voice);
 
     // --- Build voice definitions ---
     let mut voice_defs: Vec<VoiceDefinition> = Vec::new();
@@ -969,6 +1081,29 @@ pub fn lilypond_sequential_from_song(
         stanza_voice_ref = format!("\\{}", base_voice_name);
         refrain_voice_ref = None;
     }
+
+    // --- Build chord definitions ---
+    // The stanza and a refrain with its own melody are sung over their own
+    // chords; a refrain that shares the stanza melody shares its chords too.
+    let mut chord_defs: Vec<ChordDefinition> = Vec::new();
+    let stanza_chords_ref = chords_for_part(song, stanza_part, settings).map(|chords| {
+        let var_name = if refrain_own_voice.is_some() {
+            "chordsStanza"
+        } else {
+            "chordNames"
+        };
+        chord_defs.push(ChordDefinition::new(var_name, &chords.content));
+        format!("\\{}", var_name)
+    });
+    let refrain_chords_ref = match refrain_own_part {
+        Some(part) => chords_for_part(song, part, settings).map(|chords| {
+            chord_defs.push(ChordDefinition::new("chordsRefrain", &chords.content));
+            "\\chordsRefrain".to_string()
+        }),
+        // Without a melody of its own the refrain is sung to the stanza's
+        // music, chords included.
+        None => stanza_chords_ref.clone(),
+    };
 
     // --- Build lyrics definitions ---
     let mut lyrics_defs: Vec<LyricsDefinition> = Vec::new();
@@ -1035,6 +1170,7 @@ pub fn lilypond_sequential_from_song(
                 label: "Refrain".to_string(),
                 voice_ref: r_voice_ref.to_string(),
                 lyrics_ref: r_lyrics_ref.clone(),
+                chords_ref: refrain_chords_ref.clone(),
                 midi_instrument: midi_instrument.clone(),
             });
         }
@@ -1044,6 +1180,7 @@ pub fn lilypond_sequential_from_song(
             label: format!("Stanza {}", vnum),
             voice_ref: stanza_voice_ref.clone(),
             lyrics_ref: v_lyrics_ref.clone(),
+            chords_ref: stanza_chords_ref.clone(),
             midi_instrument: midi_instrument.clone(),
         });
         if let Some(ref r_lyrics_ref) = refrain_lyrics_ref {
@@ -1051,6 +1188,7 @@ pub fn lilypond_sequential_from_song(
                 label: "Refrain".to_string(),
                 voice_ref: r_voice_ref.to_string(),
                 lyrics_ref: r_lyrics_ref.clone(),
+                chords_ref: refrain_chords_ref.clone(),
                 midi_instrument: midi_instrument.clone(),
             });
         }
@@ -1067,6 +1205,7 @@ pub fn lilypond_sequential_from_song(
         layout_indent: settings.layout_indent.clone(),
         global_content,
         voice_defs,
+        chord_defs,
         lyrics_defs,
         sections,
         staff_size: settings.staff_size,
@@ -1095,10 +1234,10 @@ pub fn lilypond_parts_from_song(
     let parts = song.parts();
 
     // --- Find the stanza (verse) voice ---
-    let stanza_voice = parts
+    let (stanza_part, stanza_voice) = parts
         .iter()
         .filter(|p| p.part_type == SongPartType::Verse)
-        .find_map(|part| song.voice_for_part(part))
+        .find_map(|part| song.voice_for_part(part).map(|voice| (part, voice)))
         .ok_or_else(|| "Song has no voice content for LilyPond export".to_string())?;
 
     let base_voice_name = voice_type_to_var_name(&stanza_voice.content_type).to_string();
@@ -1109,8 +1248,11 @@ pub fn lilypond_parts_from_song(
         .filter(|p| p.part_type == SongPartType::Refrain || p.part_type == SongPartType::Chorus)
         .collect();
 
-    let refrain_own_voice: Option<&SongPartContent> =
-        refrain_parts.iter().find_map(|part| find_own_voice(part));
+    let refrain_own_part: Option<&SongPart> = refrain_parts
+        .iter()
+        .copied()
+        .find(|part| find_own_voice(part).is_some());
+    let refrain_own_voice: Option<&SongPartContent> = refrain_own_part.and_then(find_own_voice);
 
     // --- Determine voice content for stanza and refrain ---
     let stanza_voice_content =
@@ -1156,6 +1298,15 @@ pub fn lilypond_parts_from_song(
         .find_map(|part| find_lyrics(part))
         .map(|c| c.content.clone());
 
+    // --- Collect the chord lines ---
+    let stanza_chords: Option<String> =
+        chords_for_part(song, stanza_part, settings).map(|chords| chords.content.clone());
+    let refrain_chords: Option<String> = match refrain_own_part {
+        Some(part) => chords_for_part(song, part, settings).map(|chords| chords.content.clone()),
+        // A refrain that shares the stanza's melody shares its chords.
+        None => stanza_chords.clone(),
+    };
+
     // --- Build global content ---
     let global_content = build_global_content(song);
 
@@ -1173,6 +1324,7 @@ pub fn lilypond_parts_from_song(
     // Helper closure to create a part LY from a voice/lyrics pair
     let render_part = |voice_var: &str,
                        voice_content: &str,
+                       chord_content: Option<&String>,
                        lyrics_var: &str,
                        lyrics_content: &str,
                        stanza: Option<String>|
@@ -1180,6 +1332,8 @@ pub fn lilypond_parts_from_song(
         let data = PartTemplateData {
             version: "2.24.0".to_string(),
             global_content: global_content.clone(),
+            chords: chord_content
+                .map(|content| ChordDefinition::new("chordNames", content)),
             voice_var_name: voice_var.to_string(),
             voice_content: voice_content.to_string(),
             voice_ref: format!("\\{}", voice_var),
@@ -1200,6 +1354,7 @@ pub fn lilypond_parts_from_song(
             let ly = render_part(
                 &refrain_voice_var,
                 &refrain_voice_content,
+                refrain_chords.as_ref(),
                 "refrainLyrics",
                 r_lyrics,
                 None,
@@ -1215,6 +1370,7 @@ pub fn lilypond_parts_from_song(
         let ly = render_part(
             &stanza_voice_var,
             &stanza_voice_content,
+            stanza_chords.as_ref(),
             &lyrics_var,
             v_lyrics,
             Some(format!("{}.", vnum)),
@@ -1228,6 +1384,7 @@ pub fn lilypond_parts_from_song(
             let ly = render_part(
                 &refrain_voice_var,
                 &refrain_voice_content,
+                refrain_chords.as_ref(),
                 "refrainLyrics",
                 r_lyrics,
                 None,

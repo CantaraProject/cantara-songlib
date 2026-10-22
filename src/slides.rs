@@ -550,6 +550,10 @@ pub struct SlideSettings {
 
     /// Specifies which language(s) to display on the slides
     pub language: LanguageConfiguration,
+
+    /// Specifies whether a notation row prints the chord symbols above the
+    /// staff, where the song has a chord line
+    pub show_chords: bool,
 }
 
 impl Default for SlideSettings {
@@ -562,6 +566,7 @@ impl Default for SlideSettings {
             show_spoiler: true,
             max_lines: None,
             language: LanguageConfiguration::default(),
+            show_chords: true,
         }
     }
 }

@@ -21,6 +21,8 @@ It is part of the effort to rewrite [Cantara](https://github.com/reckel-jm/canta
 | [docs/meta-information.md](docs/meta-information.md) | The meta information line on slides: template and placement |
 | [docs/complex-slides.md](docs/complex-slides.md) | Slides stacking notation and several languages |
 | [docs/text-export.md](docs/text-export.md) | Plain text, Markdown/Telegram markup, and exporting several songs |
+| [docs/chords.md](docs/chords.md) | Chord lines: the notation, and where the symbols are printed |
+| [docs/transposing.md](docs/transposing.md) | Transposing a song into another key |
 
 ## Repository layout
 
@@ -31,6 +33,9 @@ src/
 ├── exporter/      slides, LilyPond, ABC, text, .sng writers
 ├── slides.rs      presentation slide types
 ├── templating.rs  the meta information template
+├── music.rs       pitches, keys and intervals
+├── chords.rs      chord lines: `\chordmode` in, chord symbols out
+├── transpose.rs   moving a song into another key
 ├── lib.rs         library entry point and C FFI
 └── main.rs        the command line wrapper
 tests/
@@ -50,4 +55,5 @@ cargo run -- "tests/data/Amazing Grace.song.yml" text           # plain lyrics
 cargo run -- a.song.yml b.ccli text --format markdown           # several songs
 cargo run -- "tests/data/Amazing Grace.sng" text                # read a SongBeamer file
 cargo run -- a.song.yml songbeamer --output a.sng               # write one
+cargo run -- a.song.yml abc --transpose F --transpose-direction up   # transpose
 ```

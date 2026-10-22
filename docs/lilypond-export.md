@@ -24,9 +24,18 @@ cantara-songlib "tests/data/Amazing Grace.song.yml" lilypond
 |---------------------|---------|--------------------------------|
 | `-p`, `--paper-size`| `a4`    | `\paper { #(set-paper-size …) }` |
 | `-i`, `--indent`    | `#0`    | `\layout { indent = … }`         |
+| `--include-chords`  | `true`  | Set to `false` to leave the chord symbols out. |
 
 `LilypondSettings` additionally offers `staff_size` and a `font` setting
 (`FontSetting::Specific { family }`) that are not exposed on the CLI.
+
+## Chords
+
+A song's chord line becomes a `\chordmode` variable printed in a `ChordNames`
+context above the staff, in all three layouts. The paper score shows one chord
+line underneath the whole staff, joining the stanza's chords and the refrain's
+in the order the melodies are printed; the sequential and per-part layouts give
+each part the chords of its own melody. See [docs/chords.md](chords.md).
 
 ## How the refrain is handled
 

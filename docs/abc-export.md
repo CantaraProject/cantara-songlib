@@ -15,7 +15,7 @@ cantara-songlib "tests/data/Amazing Grace.song.yml" abc
 |-----------------------|---------|------------------------------------------------|
 | `-u`, `--unit-note-length` | `1/4` | The `L:` field. `1/8` makes quarter notes `2`. |
 | `--all-verses`        | `true`  | Set to `false` to export only the first verse.  |
-| `--include-chords`    | `true`  | Reserved — see *Not supported yet* below.       |
+| `--include-chords`    | `true`  | Set to `false` to leave the chord symbols out.  |
 
 ## From Rust
 
@@ -106,8 +106,9 @@ w:And grace my fears re-lieved.
 w:I have al-rea-dy come,
 ```
 
-## Not supported yet
+## Chords
 
-`AbcSettings::include_chords` has no effect. Chord content is stored in
-LilyPond `\chordmode` syntax, which the exporter does not parse. The flag is
-kept so that the API does not change when support is added.
+A song's chord line is read and each symbol is placed in front of the note it
+sounds over, which is how ABC writes a chord: `"Bm"d2`. See
+[docs/chords.md](chords.md) for the notation a song stores its chords in and
+what ends up above the staff.

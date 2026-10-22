@@ -95,6 +95,8 @@ pub mod song;
 #[doc = include_str!("../docs/meta-information.md")]
 #[doc = include_str!("../docs/complex-slides.md")]
 #[doc = include_str!("../docs/text-export.md")]
+#[doc = include_str!("../docs/transposing.md")]
+#[doc = include_str!("../docs/chords.md")]
 pub struct DocumentationExamples;
 
 pub mod importer;
@@ -109,6 +111,17 @@ pub mod filetypes;
 pub mod slides;
 
 pub mod templating;
+
+/// Music theory primitives shared by the notation exporters: pitches, keys and
+/// intervals
+pub mod music;
+
+/// Chord symbols: reading the LilyPond `\chordmode` notation songs are
+/// written in
+pub(crate) mod chords;
+
+/// Transposing a song into another key
+pub mod transpose;
 
 pub mod exporter;
 
@@ -159,6 +172,7 @@ pub extern "C" fn create_presentation_from_file_c(
         empty_last_slide,
         max_lines,
         language: LanguageConfiguration::default(),
+        show_chords: true,
     };
     
     match create_presentation_from_file(file_path, slide_settings) {

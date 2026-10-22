@@ -896,6 +896,7 @@ Refrain B.";
             show_spoiler: true ,
             max_lines: Some(10),
             language: crate::slides::LanguageConfiguration::default(),
+            show_chords: true,
         };
         
         let slides: Vec<Slide> = slides_from_classic_song(
@@ -921,6 +922,7 @@ Refrain B.";
             show_spoiler: true,
             max_lines: None,
             language: crate::slides::LanguageConfiguration::default(),
+            show_chords: true,
         };
 
         let slides: Vec<Slide> = slides_from_classic_song(
@@ -963,6 +965,7 @@ Refrain B.";
             show_spoiler: true,
             max_lines: None,
             language: crate::slides::LanguageConfiguration::default(),
+            show_chords: true,
         };
 
         let slides = slides_from_classic_song(&testfile, &settings, "Verily".to_string());
@@ -993,6 +996,7 @@ Refrain B.";
             show_spoiler: true,
             max_lines: None,
             language: crate::slides::LanguageConfiguration::default(),
+            show_chords: true,
         };
 
         let slides = slides_from_classic_song(&testfile, &settings, "Verily".to_string());
@@ -1022,6 +1026,7 @@ Refrain B.";
             show_spoiler: false,
             max_lines: None,
             language: crate::slides::LanguageConfiguration::default(),
+            show_chords: true,
         };
 
         let slides = slides_from_classic_song(
@@ -1060,6 +1065,7 @@ Refrain B.";
             show_spoiler: false,
             max_lines,
             language: crate::slides::LanguageConfiguration::default(),
+            show_chords: true,
         }
     }
 

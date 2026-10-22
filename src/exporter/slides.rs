@@ -318,7 +318,10 @@ fn generate_complex_slides(
 
     let positions = language_positions(elements);
     let chunks = build_chunks(song, settings, elements, &positions);
-    let abc_settings = AbcSettings::default();
+    let abc_settings = AbcSettings {
+        include_chords: settings.show_chords,
+        ..AbcSettings::default()
+    };
 
     let count = chunks.len();
     for (index, chunk) in chunks.iter().enumerate() {
@@ -679,6 +682,7 @@ mod tests {
             empty_last_slide: true,
             max_lines: None,
             language: LanguageConfiguration::default(),
+            show_chords: true,
         };
 
         let slides = slides_from_song(&song, &settings);
@@ -709,6 +713,7 @@ mod tests {
             empty_last_slide: false,
             max_lines: None,
             language: LanguageConfiguration::SingleLanguage(Some("en".to_string())),
+            show_chords: true,
         };
 
         let slides = slides_from_song(&song, &settings);
@@ -734,6 +739,7 @@ mod tests {
             empty_last_slide: false,
             max_lines: None,
             language: LanguageConfiguration::MultiLanguage(vec![]),
+            show_chords: true,
         };
 
         let slides = slides_from_song(&song, &settings);
@@ -771,6 +777,7 @@ mod tests {
             show_spoiler: false,
             max_lines: None,
             language: LanguageConfiguration::default(),
+            show_chords: true,
         }
     }
 
