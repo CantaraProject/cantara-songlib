@@ -497,6 +497,14 @@ impl SongPart {
             .find(|content| content.content_type.is_voice())
     }
 
+    /// The chord line stored directly on this part.
+    ///
+    /// Returns `None` for a part that only repeats another part's music — use
+    /// [`Song::chords_for_part`] to follow that reference.
+    pub fn own_chords(&self) -> Option<&SongPartContent> {
+        self.content(&SongPartContentType::Chords)
+    }
+
     /// Whether this part carries any lyrics.
     pub fn has_lyrics(&self) -> bool {
         self.contents
@@ -896,6 +904,52 @@ impl Song {
             let next_id = current.is_repetition_of?;
             if visited.contains(&next_id) {
                 // The song describes a cycle; there is no melody to find.
+                return None;
+            }
+            visited.push(next_id);
+            current = self.part(&next_id)?;
+        }
+    }
+
+    /// The chord line a part is sung over, following
+    /// [`SongPart::is_repetition_of`] if the part has no chords of its own.
+    ///
+    /// Chords are inherited the same way the melody is: a verse that repeats
+    /// another verse's music is sung over that verse's chords, however long
+    /// the chain of repetitions is. A broken or circular chain yields `None`
+    /// rather than looping forever.
+    ///
+    /// ```
+    /// use cantara_songlib::song::*;
+    ///
+    /// let mut song = Song::new("Example");
+    /// let first = song.add_part_of_type(SongPartType::Verse, None);
+    /// song.part_mut(&first).unwrap().add_content(
+    ///     SongPartContent::new(SongPartContentType::Chords, "c2 g2"),
+    /// );
+    ///
+    /// // Verse 2 repeats verse 1, verse 3 repeats verse 2.
+    /// let second = song.add_part_of_type(SongPartType::Verse, None);
+    /// song.part_mut(&second).unwrap().is_repetition_of = Some(first);
+    /// let third = song.add_part_of_type(SongPartType::Verse, None);
+    /// song.part_mut(&third).unwrap().is_repetition_of = Some(second);
+    ///
+    /// let third = song.part(&third).unwrap();
+    /// assert!(third.own_chords().is_none());
+    /// assert_eq!(song.chords_for_part(third).unwrap().content, "c2 g2");
+    /// ```
+    pub fn chords_for_part<'a>(&'a self, part: &'a SongPart) -> Option<&'a SongPartContent> {
+        let mut current = part;
+        let mut visited: Vec<SongPartId> = vec![current.id()];
+
+        loop {
+            if let Some(chords) = current.own_chords() {
+                return Some(chords);
+            }
+
+            let next_id = current.is_repetition_of?;
+            if visited.contains(&next_id) {
+                // The song describes a cycle; there are no chords to find.
                 return None;
             }
             visited.push(next_id);
